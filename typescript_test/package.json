@@ -1,0 +1,14 @@
+{
+  "name": "typescript_integration",
+  "version": "1.0.0",
+  "scripts": {
+    "build:wasm": "cargo build --manifest-path rust_module/Cargo.toml --target wasm32-unknown-unknown && wasm-bindgen ../target/wasm32-unknown-unknown/debug/rust_module.wasm --out-dir pkg --target nodejs",
+    "test:tsc": "tsc --noEmit test.ts",
+    "test:run": "tsc test.ts && node test.js",
+    "test": "pnpm build:wasm && pnpm test:tsc && pnpm test:run"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  }
+}
