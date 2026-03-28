@@ -3,6 +3,7 @@ import { execute_callbacks, IAppCallbacks } from './pkg/rust_module.js';
 let readyMsg = "";
 let dataValue = 0;
 let dataArray = new Uint8Array();
+let optionVal: string | undefined = "";
 
 const callbacks: IAppCallbacks = {
     onReady: (msg: string) => {
@@ -11,6 +12,9 @@ const callbacks: IAppCallbacks = {
     onData: (a: number, b: Uint8Array) => {
         dataValue = a;
         dataArray = new Uint8Array(b); // Clone it so types match strict Uint8Array
+    },
+    onOption: (val: string | undefined) => {
+        optionVal = val;
     }
 };
 
@@ -28,6 +32,10 @@ if (dataValue !== 42.5) {
 
 if (dataArray.length !== 3 || dataArray[0] !== 1 || dataArray[1] !== 2 || dataArray[2] !== 3) {
     throw new Error(`Expected Uint8Array([1, 2, 3]), got ${dataArray}`);
+}
+
+if (optionVal !== "present") {
+    throw new Error(`Expected "present", got "${optionVal}"`);
 }
 
 console.log("All TS integration tests passed! The generated TypeScript definitions match.");

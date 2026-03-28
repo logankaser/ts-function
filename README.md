@@ -69,8 +69,9 @@ pub fn execute_callbacks(cbs: IAppCallbacks) {
 
 ### Generated TypeScript (`index.d.ts`)
 
-`wasm-bindgen` outputs the exact types your users expect, meaning zero
-`#ts[(type = "...")]` manual overrides are required.
+`wasm-bindgen` outputs the types you would expect,
+using the wonderful [ts-type](https://crates.io/crates/ts-type) crate,
+meaning zero `#ts[(type = "...")]` manual overrides are required.
 
 ```typescript
 /* tslint:disable */

@@ -1,6 +1,10 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Error, FnArg, Ident, Item, ItemImpl, ItemType, ReturnType, Type, parse_macro_input};
+use syn::{
+    Error, FnArg, GenericArgument, Ident, Item, ItemImpl, ItemType, PathArguments, ReturnType,
+    Type, parse_macro_input,
+};
+use ts_type::ToTsType;
 
 struct ParsedSignature<'a> {
     struct_ident: &'a Ident,
@@ -63,38 +67,7 @@ fn parse_item_type(item_type: &ItemType) -> syn::Result<proc_macro2::TokenStream
     let mut call_args = Vec::new();
     for (ident, ty) in &args {
         fn_args.push(quote! { #ident: #ty });
-
-        let conversion = if let Type::ImplTrait(type_impl) = *ty {
-            // Find `Into<X>`
-            let mut inner_ty_tokens = None;
-            for bound in &type_impl.bounds {
-                if let syn::TypeParamBound::Trait(trait_bound) = bound
-                    && let Some(segment) = trait_bound.path.segments.last()
-                    && segment.ident == "Into"
-                    && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
-                {
-                    inner_ty_tokens = Some(quote! { #inner_ty });
-                    break;
-                }
-            }
-            if let Some(inner) = inner_ty_tokens {
-                quote! {
-                    let #ident = ::std::convert::Into::<#inner>::into(#ident);
-                    let #ident = ::std::convert::Into::<::wasm_bindgen::JsValue>::into(#ident);
-                }
-            } else {
-                return Err(Error::new_spanned(
-                    ty,
-                    "Unsupported `impl Trait`. Only `impl Into<T>` is supported.",
-                ));
-            }
-        } else {
-            quote! {
-                let #ident = ::std::convert::Into::<::wasm_bindgen::JsValue>::into(#ident);
-            }
-        };
-
+        let conversion = generate_conversion(ident, ty)?;
         arg_conversions.push(conversion);
         call_args.push(quote! { &#ident });
     }
@@ -115,13 +88,13 @@ fn parse_item_type(item_type: &ItemType) -> syn::Result<proc_macro2::TokenStream
     let output = parsed.output;
     let ret_stmt = if matches!(output, ReturnType::Default) {
         if cfg!(feature = "console") {
-            quote! { 
+            quote! {
                 if let Err(e) = self.0.#call_method {
                     ::web_sys::console::error_1(&e);
                 }
             }
         } else {
-            quote! { 
+            quote! {
                 if let Err(e) = self.0.#call_method {
                     panic!("JavaScript exception: {:?}", e);
                 }
@@ -146,6 +119,110 @@ fn parse_item_type(item_type: &ItemType) -> syn::Result<proc_macro2::TokenStream
 
         #abi_traits
     })
+}
+
+fn generate_conversion(ident: &Ident, ty: &Type) -> syn::Result<proc_macro2::TokenStream> {
+    if let Type::ImplTrait(type_impl) = ty {
+        for bound in &type_impl.bounds {
+            if let syn::TypeParamBound::Trait(trait_bound) = bound
+                && let Some(segment) = trait_bound.path.segments.last()
+                && let PathArguments::AngleBracketed(args) = &segment.arguments
+                && let Some(GenericArgument::Type(inner_ty)) = args.args.first()
+            {
+                match segment.ident.to_string().as_str() {
+                    "Into" => {
+                        let inner_conversion = generate_conversion(ident, inner_ty)?;
+                        return Ok(quote! {
+                            let #ident = ::std::convert::Into::<#inner_ty>::into(#ident);
+                            #inner_conversion
+                        });
+                    }
+                    "AsRef" => {
+                        if let Type::Slice(slice) = inner_ty {
+                            return Ok(generate_typed_array_conversion(ident, &slice.elem));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        return Err(Error::new_spanned(
+            ty,
+            "Unsupported `impl Trait`. Only `impl Into<T>` and `impl AsRef<[T]>` are supported.",
+        ));
+    }
+
+    if let Some(inner_ty) = get_slice_element_type(ty) {
+        Ok(generate_typed_array_conversion(ident, inner_ty))
+    } else {
+        Ok(quote! {
+            let #ident = ::std::convert::Into::<::wasm_bindgen::JsValue>::into(#ident);
+        })
+    }
+}
+
+fn generate_typed_array_conversion(ident: &Ident, inner_ty: &Type) -> proc_macro2::TokenStream {
+    let inner_str = match inner_ty {
+        Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
+        _ => None,
+    };
+
+    let typed_array = match inner_str.as_deref() {
+        Some("u8") => Some(quote! { Uint8Array }),
+        Some("i8") => Some(quote! { Int8Array }),
+        Some("u16") => Some(quote! { Uint16Array }),
+        Some("i16") => Some(quote! { Int16Array }),
+        Some("u32") => Some(quote! { Uint32Array }),
+        Some("i32") => Some(quote! { Int32Array }),
+        Some("f32") => Some(quote! { Float32Array }),
+        Some("f64") => Some(quote! { Float64Array }),
+        Some("u64") => Some(quote! { BigUint64Array }),
+        Some("i64") => Some(quote! { BigInt64Array }),
+        _ => None,
+    };
+
+    if let Some(arr_type) = typed_array {
+        quote! {
+            let #ident = ::wasm_bindgen::JsValue::from(::js_sys::#arr_type::from(::std::convert::AsRef::<[#inner_ty]>::as_ref(&#ident)));
+        }
+    } else {
+        quote! {
+            let #ident = ::wasm_bindgen::JsValue::from(
+                ::std::convert::AsRef::<[#inner_ty]>::as_ref(&#ident)
+                    .iter()
+                    .map(::wasm_bindgen::JsValue::from)
+                    .collect::<::js_sys::Array>()
+            );
+        }
+    }
+}
+
+fn get_slice_element_type(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Path(type_path) => {
+            let segment = type_path.path.segments.last()?;
+            // Types that implement AsRef<[T]> and we can easily extract T from AST
+            if matches!(
+                segment.ident.to_string().as_str(),
+                "Vec" | "Box" | "Arc" | "Rc"
+            ) && let PathArguments::AngleBracketed(args) = &segment.arguments
+                && let Some(syn::GenericArgument::Type(inner)) = args.args.first()
+            {
+                if let Type::Slice(slice) = inner {
+                    return Some(&*slice.elem);
+                }
+                return Some(inner);
+            }
+        }
+        Type::Reference(type_ref) => {
+            if let Type::Slice(type_slice) = &*type_ref.elem {
+                return Some(&*type_slice.elem);
+            }
+            return get_slice_element_type(&type_ref.elem);
+        }
+        _ => {}
+    }
+    None
 }
 
 fn parse_item_impl(item_impl: &ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
@@ -225,121 +302,24 @@ fn parse_item_impl(item_impl: &ItemImpl) -> syn::Result<proc_macro2::TokenStream
     })
 }
 
-fn type_to_ts(ty: &Type) -> syn::Result<String> {
-    match ty {
-        Type::Path(type_path) => {
-            let segment = type_path.path.segments.last().unwrap();
-            let ident = &segment.ident;
-
-            let ident_str = ident.to_string();
-            match ident_str.as_str() {
-                "f32" | "f64" | "i8" | "i16" | "i32" | "u8" | "u16" | "u32" => {
-                    Ok("number".to_string())
-                }
-                "i64" | "u64" | "isize" | "usize" => Ok("bigint".to_string()),
-                "bool" => Ok("boolean".to_string()),
-                "String" => Ok("string".to_string()),
-                "JsValue" => Ok("any".to_string()),
-                "Option" => {
-                    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-                        return Err(Error::new_spanned(ty, "Expected type argument for Option"));
-                    };
-                    let syn::GenericArgument::Type(inner_ty) =
-                        args.args.first().ok_or_else(|| {
-                            Error::new_spanned(ty, "Expected type argument for Option")
-                        })?
-                    else {
-                        return Err(Error::new_spanned(ty, "Expected type argument for Option"));
-                    };
-                    let inner_ts = type_to_ts(inner_ty)?;
-                    Ok(format!("{} | undefined", inner_ts))
-                }
-                "Vec" => {
-                    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
-                        return Err(Error::new_spanned(ty, "Expected type argument for Vec"));
-                    };
-                    let syn::GenericArgument::Type(inner_ty) = args
-                        .args
-                        .first()
-                        .ok_or_else(|| Error::new_spanned(ty, "Expected type argument for Vec"))?
-                    else {
-                        return Err(Error::new_spanned(ty, "Expected type argument for Vec"));
-                    };
-                    let inner_ts = type_to_ts(inner_ty)?;
-                    Ok(format!("{}[]", inner_ts))
-                }
-                // Default to the Rust struct name for custom types (e.g. JS arrays, other types)
-                _ => {
-                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                        let mut type_params = Vec::new();
-                        for arg in &args.args {
-                            if let syn::GenericArgument::Type(inner_ty) = arg {
-                                type_params.push(type_to_ts(inner_ty)?);
-                            } else {
-                                type_params.push("any".to_string());
-                            }
-                        }
-                        Ok(format!("{}<{}>", ident_str, type_params.join(", ")))
-                    } else {
-                        Ok(ident_str)
-                    }
-                }
-            }
-        }
-        Type::Reference(type_ref) => {
-            let inner_ty = &*type_ref.elem;
-
-            // Handle `&str` special case
-            if let Type::Path(type_path) = inner_ty
-                && type_path.path.is_ident("str")
-            {
-                return Ok("string".to_string());
-            }
-            // Handle slice `&[T]`
-            if let Type::Slice(type_slice) = inner_ty {
-                let inner_ts = type_to_ts(&type_slice.elem)?;
-                return Ok(format!("{}[]", inner_ts));
-            }
-
-            // Strip reference and map
-            type_to_ts(inner_ty)
-        }
-        Type::ImplTrait(type_impl) => {
-            // Find `Into<X>`
-            for bound in &type_impl.bounds {
-                if let syn::TypeParamBound::Trait(trait_bound) = bound
-                    && let Some(segment) = trait_bound.path.segments.last()
-                    && segment.ident == "Into"
-                    && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
-                    && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
-                {
-                    return type_to_ts(inner_ty);
-                }
-            }
-            Err(Error::new_spanned(
-                ty,
-                "Unsupported `impl Trait`. Only `impl Into<T>` is supported.",
-            ))
-        }
-        _ => Err(Error::new_spanned(
-            ty,
-            "Unsupported type for TypeScript mapping. Consider using `#[ts(type = \"...\")]` instead.",
-        )),
-    }
-}
-
 fn generate_abi_traits(parsed: &ParsedSignature) -> syn::Result<proc_macro2::TokenStream> {
     let struct_ident = parsed.struct_ident;
     let mut ts_args = Vec::new();
 
     for (ident, ty) in &parsed.args {
-        let ts_ty = type_to_ts(ty)?;
+        let ts_ty = ty
+            .to_ts_type()
+            .map_err(|e| Error::new_spanned(ty, e.message))?
+            .to_string();
         ts_args.push(format!("{}: {}", ident, ts_ty));
     }
 
     let ts_output = match parsed.output {
         ReturnType::Default => "void".to_string(),
-        ReturnType::Type(_, ty) => type_to_ts(ty)?,
+        ReturnType::Type(_, ty) => ty
+            .to_ts_type()
+            .map_err(|e| Error::new_spanned(ty, e.message))?
+            .to_string(),
     };
 
     let ts_string = format!(
@@ -389,33 +369,6 @@ mod tests {
     use syn::parse_quote;
 
     #[test]
-    fn test_type_to_ts() {
-        assert_eq!(type_to_ts(&parse_quote!(f32)).unwrap(), "number");
-        assert_eq!(type_to_ts(&parse_quote!(f64)).unwrap(), "number");
-        assert_eq!(type_to_ts(&parse_quote!(u32)).unwrap(), "number");
-        assert_eq!(type_to_ts(&parse_quote!(usize)).unwrap(), "bigint");
-        assert_eq!(type_to_ts(&parse_quote!(bool)).unwrap(), "boolean");
-        assert_eq!(type_to_ts(&parse_quote!(String)).unwrap(), "string");
-        assert_eq!(type_to_ts(&parse_quote!(&str)).unwrap(), "string");
-        assert_eq!(
-            type_to_ts(&parse_quote!(Option<f64>)).unwrap(),
-            "number | undefined"
-        );
-        assert_eq!(type_to_ts(&parse_quote!(Vec<f64>)).unwrap(), "number[]");
-        assert_eq!(type_to_ts(&parse_quote!(&[u8])).unwrap(), "number[]");
-        assert_eq!(
-            type_to_ts(&parse_quote!(js_sys::Float64Array)).unwrap(),
-            "Float64Array"
-        );
-        assert_eq!(type_to_ts(&parse_quote!(JsValue)).unwrap(), "any");
-        assert_eq!(type_to_ts(&parse_quote!(impl Into<f64>)).unwrap(), "number");
-        assert_eq!(
-            type_to_ts(&parse_quote!(Result<String, String>)).unwrap(),
-            "Result<string, string>"
-        );
-    }
-
-    #[test]
     fn test_item_type() {
         let item_type: ItemType = parse_quote! {
             pub type OnClick = fn(x: f64, y: impl Into<f64>, arr: js_sys::Float64Array);
@@ -449,5 +402,24 @@ mod tests {
         assert!(
             result_str.contains("impl :: wasm_bindgen :: describe :: WasmDescribe for OnScroll")
         );
+    }
+
+    #[test]
+    fn test_recursive_generics() {
+        let item_type: ItemType = parse_quote! {
+            pub type ResultCb = fn(res: Result<String, i32>);
+        };
+        let result = parse_item_type(&item_type).unwrap();
+        let result_str = result.to_string();
+
+        assert!(result_str.contains("type ResultCb = (res: Result<string, number>) => void;"));
+
+        let item_type: ItemType = parse_quote! {
+            pub type NestedVecCb = fn(args: Vec<Vec<f64>>);
+        };
+        let result = parse_item_type(&item_type).unwrap();
+        let result_str = result.to_string();
+
+        assert!(result_str.contains("type NestedVecCb = (args: Float64Array[]) => void;"));
     }
 }
