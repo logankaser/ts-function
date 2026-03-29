@@ -33,7 +33,7 @@ fn test_example_1_primary_api() {
     let b = js_sys::Uint8Array::from(b_bytes);
 
     // 4. Call the JS function securely using our strongly typed Rust signature
-    cb.call(a, b);
+    cb.call(a, b).unwrap();
 
     // 5. Verify the JavaScript environment did the correct XOR operation
     let res = get_xor_result();
@@ -124,7 +124,10 @@ fn test_example_3_ts_macro_struct() {
     let callbacks: MyCallbacks = icallbacks.parse();
 
     // 4. Fire the callback!
-    callbacks.on_event.call("Hello from ts_macro!".to_string());
+    callbacks
+        .on_event
+        .call("Hello from ts_macro!".to_string())
+        .unwrap();
 
     // 5. Verify the JS function ran
     assert_eq!(get_state_msg(), "Hello from ts_macro!");

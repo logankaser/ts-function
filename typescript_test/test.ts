@@ -3,6 +3,7 @@ import { execute_callbacks, IAppCallbacks } from './pkg/rust_module.js';
 let readyMsg = "";
 let dataValue = 0;
 let dataArray = new Uint8Array();
+let optionVal: string | undefined = "";
 
 const callbacks: IAppCallbacks = {
     onReady: (msg: string) => {
@@ -11,6 +12,12 @@ const callbacks: IAppCallbacks = {
     onData: (a: number, b: Uint8Array) => {
         dataValue = a;
         dataArray = new Uint8Array(b); // Clone it so types match strict Uint8Array
+    },
+    onOption: (val: string | undefined) => {
+        optionVal = val;
+    },
+    onCalculate: (a: number) => {
+        return a * 2;
     }
 };
 
@@ -30,27 +37,8 @@ if (dataArray.length !== 3 || dataArray[0] !== 1 || dataArray[1] !== 2 || dataAr
     throw new Error(`Expected Uint8Array([1, 2, 3]), got ${dataArray}`);
 }
 
-console.log("All TS integration tests passed! The generated TypeScript definitions match.");
-
-import { test_console_log } from './pkg/rust_module.js';
-
-let errorLogged = false;
-let originalError = console.error;
-console.error = (...args: any[]) => {
-    errorLogged = true;
-};
-
-// This function throws an error internally. If `ts-function` panics,
-// the Node process will crash. If the `console` feature works,
-// it will simply catch the error and pipe it to `console.error`.
-test_console_log(() => {
-    throw new Error("Logged JavaScript Error");
-});
-
-console.error = originalError;
-
-if (!errorLogged) {
-    throw new Error("Expected an error to be logged via web_sys::console, but none was recorded!");
+if (optionVal !== "present") {
+    throw new Error(`Expected "present", got "${optionVal}"`);
 }
 
-console.log("Console logging integration test passed!");
+console.log("All TS integration tests passed! The generated TypeScript definitions match.");

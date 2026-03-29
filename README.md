@@ -19,13 +19,6 @@ pure Rust, automatically generating the correct TypeScript types (`(args: ...)
 => void`) and implementing the `wasm-bindgen` ABI traits required to pass those
 callbacks across the Wasm boundary safely.
 
-> **Important**: By default, this crate automatically logs any JavaScript
-> exceptions thrown during callback execution using `web_sys::console::error_1`.
-> Therefore, your project must depend on `web-sys` with the `console` feature
-> enabled. If you'd like to disable this dependency to reduce code size, you can
-> disable the default `console` feature of `ts-function`. Doing so will cause
-> the execution to panic instead of log.
-
 ## Example: Callback Struct Pattern
 
 This is the recommended pattern for passing a dictionary/struct of callbacks
@@ -58,19 +51,21 @@ pub fn execute_callbacks(cbs: IAppCallbacks) {
     // `.parse()` safely extracts the `js_sys::Function` objects into your strongly-typed wrappers
     let callbacks: AppCallbacks = cbs.parse();
     
-    // Call the functions! Arguments are automatically converted to `JsValue`
-    callbacks.on_ready.call("System is ready".to_string());
+    // Call the functions! Arguments are automatically converted to `JsValue`.
+    // The `call` method returns a `Result<(), JsValue>` forwarding any JS exceptions.
+    callbacks.on_ready.call("System is ready".to_string()).unwrap();
     
     let arr = js_sys::Uint8Array::new_with_length(3);
     arr.copy_from(&[1, 2, 3]);
-    callbacks.on_data.call(42.5, arr);
+    callbacks.on_data.call(42.5, arr).unwrap();
 }
 ```
 
 ### Generated TypeScript (`index.d.ts`)
 
-`wasm-bindgen` outputs the exact types your users expect, meaning zero
-`#ts[(type = "...")]` manual overrides are required.
+`wasm-bindgen` outputs the types you would expect,
+using the wonderful [ts-type](https://crates.io/crates/ts-type) crate,
+meaning zero `#ts[(type = "...")]` manual overrides are required.
 
 ```typescript
 /* tslint:disable */
@@ -88,6 +83,64 @@ interface IAppCallbacks {
 
 export function execute_callbacks(cbs: IAppCallbacks): void;
 ```
+
+## Supported Types
+
+`ts-function` supports a wide range of Rust types, automatically mapping them to their idiomatic TypeScript equivalents.
+
+| Rust Type | TypeScript Type | Notes |
+| :--- | :--- | :--- |
+| `f32`, `f64`, `i8`-`i32`, `u8`-`u32` | `number` | |
+| `i64`, `u64` | `bigint` | Mapped via `js_sys::BigInt` |
+| `bool` | `boolean` | |
+| `String`, `&str` | `string` | |
+| `Option<T>` | `T \| undefined` | |
+| `Vec<u8>`, `&[u8]` | `Uint8Array` | See [Zero-Copy Performance Tip](#zero-copy-performance-tip) |
+| `Vec<f64>`, `&[f64]` | `Float64Array` | Also supports `i8`, `u16`, `i32`, etc. |
+| `JsValue` | `any` | |
+| `js_sys::Object` | `object` | |
+| `IMyInterface` | `IMyInterface` | Any `JsCast` type (including `ts-macro` interfaces) |
+
+## Return Values & Performance
+
+The `#[ts_function]` macro supports returning values from JavaScript back into
+Rust. It handles standard primitives, strings, options, and even numeric vectors
+(via `TypedArray`).
+
+### Example: Returning a Value
+
+```rust
+#[ts_function]
+pub type CalculateCb = fn(a: f64) -> f64;
+
+// Usage:
+let result: f64 = calculate_cb.call(10.0).unwrap();
+```
+
+### Zero-Copy Performance Tip
+
+When returning large arrays, using `Vec<u8>` or similar will force a memory copy
+from the JavaScript heap to the Rust heap. To achieve zero-copy performance,
+you can return a `js_sys` type directly:
+
+```rust
+#[ts_function]
+pub type LargeDataCb = fn() -> js_sys::Uint8Array;
+
+// Usage (Zero-Copy):
+let arr: js_sys::Uint8Array = large_data_cb.call().unwrap();
+```
+
+The macro uses `JsCast::unchecked_into` for these types, allowing you to work
+directly with the JavaScript memory view.
+
+## Type Safety & Runtime Overhead
+
+By relying on the generated TypeScript signatures, `ts-function` avoids some of
+the runtime overhead typically associated with `JsValue` dynamic type checking. 
+Because the TypeScript compiler ensures that the JavaScript environment satisfies
+the function's contract, we can use unchecked casts in the generated Rust glue 
+code.
 
 ## Advanced Usage: The Escape Hatch
 
@@ -117,17 +170,6 @@ impl SafeCallback {
     }
 }
 ```
-
-## Testing
-
-This crate employs a "holy grail" test strategy. Running `./test.sh` will:
-1. Run internal macro unit tests.
-2. Execute the `wasm-bindgen-test` headless runner to ensure the generated code
-links correctly across the Wasm ABI boundary.
-3. Build a sub-crate into WebAssembly, generate `.d.ts` bindings, and run `tsc`
-(TypeScript compiler) over a test script to statically prove the generated TS
-strings perfectly match the `ts-macro` struct interfaces.
-
 ## License
 
 Dual-licensed under either the [MIT license](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE) at your option.
