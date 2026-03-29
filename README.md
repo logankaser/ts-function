@@ -4,9 +4,9 @@
 
 A proc-macro that generates TypeScript type aliases and `wasm-bindgen` ABI trait
 implementations for Rust callback wrapper structs, enabling strongly-typed
-JavaScript callbacks in `ts-macro` projects with **zero manual annotation**.
+Typescript Functions types in `ts-macro` projects with little to no boilerplate.
 
-## Problem
+## Motivation
 
 When using [`ts-macro`](https://crates.io/crates/ts-macro) to generate
 TypeScript interfaces for Rust structs, there is no built-in support for
@@ -21,8 +21,11 @@ callbacks across the Wasm boundary safely.
 
 ## Example: Callback Struct Pattern
 
-This is the recommended pattern for passing a dictionary/struct of callbacks
-from JavaScript into your Rust WebAssembly module.
+This pattern which in my opinion, is a good way to hook a Rust WASM App like into a Typescript codebase, 
+Is the modivating use case for this project.
+Specifically, I wanted to do this for a [Bevy](https://bevy.org/) project of mine, embeded inside a React frontend.
+Something I found to work well was a pattern where rust code called callbacks which modify [valtio](https://valtio.dev/) state,
+causing React to re-render. (Also, for the record I would 100% have chosen something more "interesting" than React, but this is a work project)
 
 ### Rust (`src/lib.rs`)
 
@@ -144,32 +147,44 @@ code.
 
 ## Advanced Usage: The Escape Hatch
 
-If you need to handle errors thrown by JavaScript closures, return complex
-values, or use types that don't implement `Into<JsValue>`, you can use the
-escape hatch by applying `#[ts_function]` to an `impl` block for a tuple-struct
-wrapping `js_sys::Function`.
+Now that `ts-function` natively supports returning values and returning `Result<T, JsValue>` for errors,
+the primary API via type aliases (`pub type MyCb = fn(...) -> ...`) handles almost all use cases.
+However, if you need completely custom serialization, have complex types not supported natively by the macro,
+or want to embed specific side-effects and error handling directly into the callback execution, you can use the escape hatch.
+By applying `#[ts_function]` to an `impl` block for a tuple-struct wrapping `js_sys::Function`, you take complete control of the `call` method's implementation.
+
+**`ts-function` will still parse your `call` method's signature and automatically generate the correct TypeScript interface for it!**
 
 ```rust
 use wasm_bindgen::prelude::*;
 use ts_function::ts_function;
 
-pub struct SafeCallback(pub ::js_sys::Function);
+// 1. Define your own tuple struct
+pub struct CustomLoggingCallback(pub js_sys::Function);
 
+// 2. Apply the macro to the impl block
 #[ts_function]
-impl SafeCallback {
+impl CustomLoggingCallback {
+    // 3. Define the `call` signature exactly how you want it exposed to TypeScript
     pub fn call(&self, val: f64) {
-        // Execute the function but catch the error thrown by JS
+        // You are responsible for all conversions and calling the JS function
         let result = self.0.call1(
-            &::wasm_bindgen::JsValue::NULL,
-            &::wasm_bindgen::JsValue::from_f64(val),
+            &wasm_bindgen::JsValue::NULL,
+            &wasm_bindgen::JsValue::from_f64(val),
         );
 
+        // Handle errors internally however you want
         if let Err(e) = result {
-            web_sys::console::error_1(&e);
+            if let Ok(err_obj) = e.dyn_into::<js_sys::Error>() {
+                web_sys::console::error_1(&err_obj.message().into());
+            }
         }
     }
 }
 ```
+
+In the example above, `ts-function` will emit `export type CustomLoggingCallback = (val: number) => void;`.
+
 ## License
 
 Dual-licensed under either the [MIT license](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE) at your option.
