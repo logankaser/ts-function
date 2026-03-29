@@ -11,11 +11,15 @@ extern "C" {
 }
 
 #[wasm_bindgen_test]
-#[should_panic(expected = "JavaScript exception: JsValue(Error: Intentional JavaScript Error")]
-fn test_default_behavior_panics() {
+fn test_default_behavior_returns_err() {
     let cb = ThrowCb::from(get_throw_cb());
 
-    // This call will throw an error in JS. Because the `console` feature is OFF
-    // by default, the macro will generate code that catches the error and panics.
-    cb.call();
+    // This call will throw an error in JS. Now it returns a Result::Err
+    // instead of panicking.
+    let res = cb.call();
+    assert!(res.is_err());
+
+    let err = res.unwrap_err();
+    let err_str = format!("{:?}", err);
+    assert!(err_str.contains("Intentional JavaScript Error"));
 }

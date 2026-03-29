@@ -35,6 +35,70 @@ pub fn ts_function(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+fn generate_return_conversion(ty: &Type) -> syn::Result<proc_macro2::TokenStream> {
+    match ty {
+        Type::Path(type_path) => {
+            let segment = type_path.path.segments.last().unwrap();
+            let ident = &segment.ident;
+            let ident_str = ident.to_string();
+
+            if let Some(inner_ty) = get_slice_element_type(ty)
+                && let Some(arr_type) = get_typed_array_ident(inner_ty)
+            {
+                return Ok(quote! {
+                    let arr: ::js_sys::#arr_type = ::wasm_bindgen::JsCast::unchecked_into(res);
+                    Ok(::std::convert::Into::<#ty>::into(arr.to_vec()))
+                });
+            }
+
+            match ident_str.as_str() {
+                "f32" | "f64" | "i8" | "i16" | "i32" | "u8" | "u16" | "u32" => Ok(quote! {
+                    res.as_f64().map(|v| v as #ty).ok_or_else(|| ::wasm_bindgen::JsValue::from_str("Expected a number"))
+                }),
+                "i64" | "u64" => Ok(quote! {
+                    ::std::convert::TryInto::<#ty>::try_into(res).map_err(|_| ::wasm_bindgen::JsValue::from_str("Expected a BigInt"))
+                }),
+                "bool" => Ok(quote! {
+                    res.as_bool().ok_or_else(|| ::wasm_bindgen::JsValue::from_str("Expected a boolean"))
+                }),
+                "String" => Ok(quote! {
+                    res.as_string().ok_or_else(|| ::wasm_bindgen::JsValue::from_str("Expected a string"))
+                }),
+                "JsValue" => Ok(quote! {
+                    Ok(res)
+                }),
+                "Option" => {
+                    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+                        return Err(Error::new_spanned(
+                            ty,
+                            "Expected generic argument for Option",
+                        ));
+                    };
+                    let syn::GenericArgument::Type(inner_ty) = args.args.first().unwrap() else {
+                        return Err(Error::new_spanned(ty, "Expected type argument for Option"));
+                    };
+                    let inner_conversion = generate_return_conversion(inner_ty)?;
+                    Ok(quote! {
+                        if res.is_null() || res.is_undefined() {
+                            Ok(None)
+                        } else {
+                            let res = { #inner_conversion };
+                            res.map(Some)
+                        }
+                    })
+                }
+                _ => Ok(quote! {
+                    Ok(::wasm_bindgen::JsCast::unchecked_into::<#ty>(res))
+                }),
+            }
+        }
+        _ => Err(Error::new_spanned(
+            ty,
+            "Unsupported return type in type alias pattern. Use the `impl` escape hatch instead.",
+        )),
+    }
+}
+
 fn parse_item_type(item_type: &ItemType) -> syn::Result<proc_macro2::TokenStream> {
     let Type::BareFn(bare_fn) = &*item_type.ty else {
         return Err(Error::new_spanned(
@@ -72,46 +136,36 @@ fn parse_item_type(item_type: &ItemType) -> syn::Result<proc_macro2::TokenStream
         call_args.push(quote! { &#ident });
     }
 
-    let call_method = match call_args.len() {
-        0 => quote! { call0(&::wasm_bindgen::JsValue::NULL) },
-        1 => quote! { call1(&::wasm_bindgen::JsValue::NULL, #(#call_args),*) },
-        2 => quote! { call2(&::wasm_bindgen::JsValue::NULL, #(#call_args),*) },
-        3 => quote! { call3(&::wasm_bindgen::JsValue::NULL, #(#call_args),*) },
-        _ => {
-            return Err(Error::new_spanned(
-                item_type,
-                "Functions with more than 3 arguments are not supported yet",
-            ));
-        }
-    };
+    let args_len = call_args.len();
+    if args_len > 9 {
+        return Err(Error::new_spanned(
+            item_type,
+            "Functions with more than 9 arguments are not supported yet",
+        ));
+    }
+    let call_method_name = format_ident!("call{}", args_len);
+    let call_method = quote! { #call_method_name(&::wasm_bindgen::JsValue::NULL, #(#call_args),*) };
 
     let output = parsed.output;
-    let ret_stmt = if matches!(output, ReturnType::Default) {
-        if cfg!(feature = "console") {
-            quote! {
-                if let Err(e) = self.0.#call_method {
-                    ::web_sys::console::error_1(&e);
-                }
-            }
-        } else {
-            quote! {
-                if let Err(e) = self.0.#call_method {
-                    panic!("JavaScript exception: {:?}", e);
-                }
-            }
+    let (ret_type, ret_stmt) = match output {
+        ReturnType::Default => (quote! { () }, quote! { self.0.#call_method.map(|_| ()) }),
+        ReturnType::Type(_, ty) => {
+            let conversion = generate_return_conversion(ty)?;
+            (
+                quote! { #ty },
+                quote! {
+                    let res = self.0.#call_method?;
+                    #conversion
+                },
+            )
         }
-    } else {
-        return Err(Error::new_spanned(
-            output,
-            "Return types are not supported in the type alias pattern. Use the `impl` escape hatch instead.",
-        ));
     };
 
     Ok(quote! {
         pub struct #struct_ident(pub ::js_sys::Function);
 
         impl #struct_ident {
-            pub fn call(&self, #(#fn_args),*) #output {
+            pub fn call(&self, #(#fn_args),*) -> Result<#ret_type, ::wasm_bindgen::JsValue> {
                 #(#arg_conversions)*
                 #ret_stmt
             }
@@ -162,26 +216,7 @@ fn generate_conversion(ident: &Ident, ty: &Type) -> syn::Result<proc_macro2::Tok
 }
 
 fn generate_typed_array_conversion(ident: &Ident, inner_ty: &Type) -> proc_macro2::TokenStream {
-    let inner_str = match inner_ty {
-        Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
-        _ => None,
-    };
-
-    let typed_array = match inner_str.as_deref() {
-        Some("u8") => Some(quote! { Uint8Array }),
-        Some("i8") => Some(quote! { Int8Array }),
-        Some("u16") => Some(quote! { Uint16Array }),
-        Some("i16") => Some(quote! { Int16Array }),
-        Some("u32") => Some(quote! { Uint32Array }),
-        Some("i32") => Some(quote! { Int32Array }),
-        Some("f32") => Some(quote! { Float32Array }),
-        Some("f64") => Some(quote! { Float64Array }),
-        Some("u64") => Some(quote! { BigUint64Array }),
-        Some("i64") => Some(quote! { BigInt64Array }),
-        _ => None,
-    };
-
-    if let Some(arr_type) = typed_array {
+    if let Some(arr_type) = get_typed_array_ident(inner_ty) {
         quote! {
             let #ident = ::wasm_bindgen::JsValue::from(::js_sys::#arr_type::from(::std::convert::AsRef::<[#inner_ty]>::as_ref(&#ident)));
         }
@@ -194,6 +229,27 @@ fn generate_typed_array_conversion(ident: &Ident, inner_ty: &Type) -> proc_macro
                     .collect::<::js_sys::Array>()
             );
         }
+    }
+}
+
+fn get_typed_array_ident(inner_ty: &Type) -> Option<proc_macro2::TokenStream> {
+    let inner_str = match inner_ty {
+        Type::Path(p) => p.path.segments.last().map(|s| s.ident.to_string()),
+        _ => None,
+    };
+
+    match inner_str.as_deref() {
+        Some("u8") => Some(quote! { Uint8Array }),
+        Some("i8") => Some(quote! { Int8Array }),
+        Some("u16") => Some(quote! { Uint16Array }),
+        Some("i16") => Some(quote! { Int16Array }),
+        Some("u32") => Some(quote! { Uint32Array }),
+        Some("i32") => Some(quote! { Int32Array }),
+        Some("f32") => Some(quote! { Float32Array }),
+        Some("f64") => Some(quote! { Float64Array }),
+        Some("u64") => Some(quote! { BigUint64Array }),
+        Some("i64") => Some(quote! { BigInt64Array }),
+        _ => None,
     }
 }
 

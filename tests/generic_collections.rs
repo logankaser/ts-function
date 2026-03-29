@@ -31,27 +31,28 @@ fn test_generic_collections() {
 
     // 1. Test Box<[u8]>
     let cb = BoxCb::from(js_cb.clone());
-    cb.call(vec![1, 2, 3].into_boxed_slice());
+    cb.call(vec![1, 2, 3].into_boxed_slice()).unwrap();
     assert_eq!(get_last_array().to_vec(), vec![1.0, 2.0, 3.0]);
 
     // 2. Test impl AsRef<[f64]>
     let cb = AsRefCb::from(js_cb.clone());
     let data = vec![4.0, 5.0];
-    cb.call(&data);
+    cb.call(&data).unwrap();
     assert_eq!(get_last_array().to_vec(), vec![4.0, 5.0]);
 
     // 3. Test impl Into<Vec<u32>>
     let cb = IntoVecCb::from(js_cb.clone());
-    cb.call(vec![10u32, 20u32]);
+    cb.call(vec![10u32, 20u32]).unwrap();
     assert_eq!(get_last_array().to_vec(), vec![10.0, 20.0]);
 
     // 4. Test Arc<[i32]>
     let cb = ArcCb::from(js_cb.clone());
-    cb.call(Arc::from(vec![-1, -2].into_boxed_slice()));
+    cb.call(Arc::from(vec![-1, -2].into_boxed_slice())).unwrap();
     assert_eq!(get_last_array().to_vec(), vec![-1.0, -2.0]);
 
     // 5. Test Rc<[i16]>
     let cb = RcCb::from(js_cb);
-    cb.call(Rc::from(vec![100, 200].into_boxed_slice()));
+    cb.call(Rc::from(vec![100, 200].into_boxed_slice()))
+        .unwrap();
     assert_eq!(get_last_array().to_vec(), vec![100.0, 200.0]);
 }

@@ -15,6 +15,9 @@ const callbacks: IAppCallbacks = {
     },
     onOption: (val: string | undefined) => {
         optionVal = val;
+    },
+    onCalculate: (a: number) => {
+        return a * 2;
     }
 };
 
@@ -39,26 +42,3 @@ if (optionVal !== "present") {
 }
 
 console.log("All TS integration tests passed! The generated TypeScript definitions match.");
-
-import { test_console_log } from './pkg/rust_module.js';
-
-let errorLogged = false;
-let originalError = console.error;
-console.error = (...args: any[]) => {
-    errorLogged = true;
-};
-
-// This function throws an error internally. If `ts-function` panics,
-// the Node process will crash. If the `console` feature works,
-// it will simply catch the error and pipe it to `console.error`.
-test_console_log(() => {
-    throw new Error("Logged JavaScript Error");
-});
-
-console.error = originalError;
-
-if (!errorLogged) {
-    throw new Error("Expected an error to be logged via web_sys::console, but none was recorded!");
-}
-
-console.log("Console logging integration test passed!");

@@ -17,10 +17,10 @@ extern "C" {
 #[wasm_bindgen_test]
 fn test_complex_types() {
     let cb_string = CbString::from(get_cb());
-    cb_string.call("hello".to_string());
+    cb_string.call("hello".to_string()).unwrap();
     assert_eq!(get_cb_state(), "hello");
 
     let cb_into_string = CbIntoString::from(get_cb());
-    cb_into_string.call("world"); // Passing &str to impl Into<String>
+    cb_into_string.call("world").unwrap(); // Passing &str to impl Into<String>
     assert_eq!(get_cb_state(), "world");
 }
