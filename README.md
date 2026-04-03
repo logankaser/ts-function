@@ -1,5 +1,7 @@
 # ts-function
 
+[![Crates.io](https://img.shields.io/crates/v/ts-function.svg)](https://crates.io/crates/ts-function)
+[![Docs.rs](https://docs.rs/ts-function/badge.svg)](https://docs.rs/ts-function)
 [![Rust 2024](https://img.shields.io/badge/edition-2024-red.svg)](https://rust-lang.org)
 
 A proc-macro that generates TypeScript type aliases and `wasm-bindgen` ABI trait
