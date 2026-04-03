@@ -10,7 +10,7 @@ homepage = "https://github.com/logankaser/ts-function"
 repository = "https://github.com/logankaser/ts-function"
 categories = ["wasm", "web-programming", "development-tools::ffi"]
 keywords = ["wasm-bindgen", "typescript", "callback", "macro"]
-include = ["Cargo.toml", "src", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+include = ["Cargo.toml", "src", "README.md", "LICENSE-MIT", "LICENSE-APACHE", "tests"]
 
 [lib]
 proc-macro = true
