@@ -31,8 +31,7 @@ causing React to re-render. (Also, for the record I would 100% have chosen somet
 
 ```rust
 use wasm_bindgen::prelude::*;
-use ts_function::ts_function;
-use ts_macro::ts;
+use ts_function::{ts, ts_function};
 
 // 1. Define your callback signatures in pure Rust using type aliases
 #[ts_function]
@@ -184,6 +183,12 @@ impl CustomLoggingCallback {
 ```
 
 In the example above, `ts-function` will emit `export type CustomLoggingCallback = (val: number) => void;`.
+
+## In-Sourced Macros
+
+This crate currently provides an updated version of the `#[ts]` macro (originally from `ts-macro`), as well as the underlying `ts-type` logic. These have been brought in-house to support the advanced type generation required for `ts-function` pending the acceptance of PRs into the [upstream project](https://github.com/ryangoree/wasm-utils-rs).
+
+When those PRs are accepted, this crate will revert to depending on the official releases.
 
 ## License
 

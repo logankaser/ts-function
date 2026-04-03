@@ -184,7 +184,6 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "ts-function",
- "ts-macro",
  "wasm-bindgen",
 ]
 
@@ -273,34 +272,13 @@ dependencies = [
 name = "ts-function"
 version = "0.1.0"
 dependencies = [
+ "heck",
  "js-sys",
  "proc-macro2",
  "quote",
  "syn",
- "ts-macro",
- "ts-type",
  "wasm-bindgen",
  "wasm-bindgen-test",
-]
-
-[[package]]
-name = "ts-macro"
-version = "1.0.2"
-source = "git+https://github.com/logankaser/wasm-utils-rs#964b288a66e3d82685fe2c012b8130b4c7f278e9"
-dependencies = [
- "heck",
- "quote",
- "syn",
- "ts-type",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "ts-type"
-version = "1.0.2"
-source = "git+https://github.com/logankaser/wasm-utils-rs#964b288a66e3d82685fe2c012b8130b4c7f278e9"
-dependencies = [
- "syn",
 ]
 
 [[package]]

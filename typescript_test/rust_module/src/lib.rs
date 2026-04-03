@@ -1,5 +1,4 @@
-use ts_function::ts_function;
-use ts_macro::ts;
+use ts_function::{ts, ts_function};
 use wasm_bindgen::prelude::*;
 
 #[ts_function]

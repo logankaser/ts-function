@@ -4,7 +4,17 @@ use syn::{
     Error, FnArg, GenericArgument, Ident, Item, ItemImpl, ItemType, PathArguments, ReturnType,
     Type, parse_macro_input,
 };
-use ts_type::ToTsType;
+
+#[macro_use]
+mod ts_type;
+mod ts_macro;
+
+use crate::ts_type::ToTsType;
+
+#[proc_macro_attribute]
+pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
+    ts_macro::ts(attr, input)
+}
 
 struct ParsedSignature<'a> {
     struct_ident: &'a Ident,
