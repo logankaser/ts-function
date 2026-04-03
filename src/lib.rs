@@ -11,6 +11,25 @@ mod ts_macro;
 
 use crate::ts_type::ToTsType;
 
+/// Generates TypeScript interface bindings from a Rust struct.
+///
+/// This attribute works identically to the upstream `ts-macro` attribute, allowing
+/// the struct to define a TypeScript interface with property bindings seamlessly
+/// mapped to Javascript functions.
+///
+/// It generates:
+/// 1. A TypeScript interface string exposed as a custom wasm section
+/// 2. Extensible bindings and trait implementations
+///
+/// The default behavior for field names is to convert to `camelCase` for Javascript conventions.
+/// However, you can opt-out by adding `rename_all = "none"`:
+///
+/// ```rust,ignore
+/// #[ts(rename_all = "none")]
+/// struct MyStruct {
+///     my_field_name: String, // Will remain "my_field_name" in TypeScript
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
     ts_macro::ts(attr, input)
@@ -22,6 +41,51 @@ struct ParsedSignature<'a> {
     output: &'a ReturnType,
 }
 
+/// Generates TypeScript type aliases and `wasm-bindgen` ABI trait implementations
+/// for Rust callback wrapper structs.
+///
+/// `ts-function` acts as a bridge for function/callback types in pure Rust when
+/// interoperating with TypeScript using `ts-macro`. It can be applied to either
+/// type aliases (`pub type MyCb = fn(args: ...)`) or `impl` blocks (the "escape hatch").
+///
+/// # Examples
+///
+/// **Basic Usage**
+///
+/// ```rust,ignore
+/// use ts_function::{ts, ts_function};
+///
+/// #[ts_function]
+/// pub type OnReadyCb = fn(msg: String);
+///
+/// #[ts]
+/// struct AppCallbacks {
+///     on_ready: OnReadyCb,
+/// }
+/// ```
+///
+/// **Escape Hatch Usage**
+///
+/// For completely custom serialization or embedding specific side-effects and error
+/// handling directly into the callback execution:
+///
+/// ```rust,ignore
+/// use wasm_bindgen::prelude::*;
+/// use ts_function::ts_function;
+///
+/// pub struct CustomLoggingCallback(pub js_sys::Function);
+///
+/// #[ts_function]
+/// impl CustomLoggingCallback {
+///     pub fn call(&self, val: f64) {
+///         // Call the JS function and handle errors internally
+///         let _ = self.0.call1(
+///             &wasm_bindgen::JsValue::NULL,
+///             &wasm_bindgen::JsValue::from_f64(val),
+///         );
+///     }
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn ts_function(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as Item);

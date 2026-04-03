@@ -41,6 +41,7 @@ macro_rules! abort {
 struct TsArgs {
     name: Option<Ident>,
     extends: Option<Punctuated<Ident, Token![,]>>,
+    rename_all: Option<String>,
 }
 
 impl Parse for TsArgs {
@@ -48,6 +49,7 @@ impl Parse for TsArgs {
         let mut args = TsArgs {
             name: None,
             extends: None,
+            rename_all: None,
         };
 
         while !input.is_empty() {
@@ -57,6 +59,20 @@ impl Parse for TsArgs {
             match key.to_string().as_str() {
                 "name" => args.name = Some(input.parse()?),
                 "extends" => args.extends = Some(input.parse_terminated(Ident::parse, Token![,])?),
+                "rename_all" => {
+                    if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(lit_str),
+                        ..
+                    }) = input.parse()?
+                    {
+                        args.rename_all = Some(lit_str.value());
+                    } else {
+                        return Err(Error::new(
+                            key.span(),
+                            "Expected string literal for `rename_all`",
+                        ));
+                    }
+                }
                 _ => {
                     return Err(Error::new(
                         key.span(),
@@ -107,8 +123,11 @@ pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
         let mut doc_lines = vec![];
         let mut is_optional = false;
 
-        // Convert the Rust field name to a camelCase TypeScript field name
-        let mut ts_field_name = format_ident!("{}", field_name.to_string().to_lower_camel_case());
+        // Convert the Rust field name to a TypeScript field name
+        let mut ts_field_name = match args.rename_all.as_deref() {
+            Some("none") => format_ident!("{}", field_name),
+            _ => format_ident!("{}", field_name.to_string().to_lower_camel_case()),
+        };
 
         // Convert the Rust type to a TypeScript type
         let mut ts_field_type = match field_type.to_ts_type() {
@@ -346,4 +365,18 @@ pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ts_args_parse() {
+        let attr = quote! { name = MyStruct, rename_all = "none", extends = Base1, Base2 };
+        let args: TsArgs = syn::parse2(attr).unwrap();
+        assert_eq!(args.name.unwrap().to_string(), "MyStruct");
+        assert_eq!(args.extends.unwrap().len(), 2);
+        assert_eq!(args.rename_all.unwrap(), "none");
+    }
 }
