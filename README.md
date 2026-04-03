@@ -27,8 +27,6 @@ Specifically, I wanted to do this for a [Bevy](https://bevy.org/) project of min
 Something I found to work well was a pattern where rust code called callbacks which modify [valtio](https://valtio.dev/) state,
 causing React to re-render. (Also, for the record I would 100% have chosen something more "interesting" than React, but this is a work project)
 
-### Rust (`src/lib.rs`)
-
 ```rust
 use wasm_bindgen::prelude::*;
 use ts_function::{ts, ts_function};
@@ -86,6 +84,16 @@ interface IAppCallbacks {
 export function execute_callbacks(cbs: IAppCallbacks): void;
 ```
 
+### Example: Returning a Value
+
+```rust
+#[ts_function]
+pub type CalculateCb = fn(a: f64) -> f64;
+
+// Usage:
+let result: f64 = calculate_cb.call(10.0).unwrap();
+```
+
 ## Supported Types
 
 `ts-function` supports a wide range of Rust types, automatically mapping them to their idiomatic TypeScript equivalents.
@@ -101,7 +109,7 @@ export function execute_callbacks(cbs: IAppCallbacks): void;
 | `Vec<f64>`, `&[f64]` | `Float64Array` | Also supports `i8`, `u16`, `i32`, etc. |
 | `JsValue` | `any` | |
 | `js_sys::Object` | `object` | |
-| `IMyInterface` | `IMyInterface` | Any `JsCast` type (including `ts-macro` interfaces) |
+| Rust Struct | Typescript Object | Any `JsCast` type (including `ts` / `ts-macro` interfaces) |
 
 ## Return Values & Performance
 
@@ -109,17 +117,7 @@ The `#[ts_function]` macro supports returning values from JavaScript back into
 Rust. It handles standard primitives, strings, options, and even numeric vectors
 (via `TypedArray`).
 
-### Example: Returning a Value
-
-```rust
-#[ts_function]
-pub type CalculateCb = fn(a: f64) -> f64;
-
-// Usage:
-let result: f64 = calculate_cb.call(10.0).unwrap();
-```
-
-### Zero-Copy Performance Tip
+### Zero-Copy Performance
 
 When returning large arrays, using `Vec<u8>` or similar will force a memory copy
 from the JavaScript heap to the Rust heap. To achieve zero-copy performance,
@@ -144,7 +142,7 @@ Because the TypeScript compiler ensures that the JavaScript environment satisfie
 the function's contract, we can use unchecked casts in the generated Rust glue 
 code.
 
-## Advanced Usage: The Escape Hatch
+## Advanced Usage
 
 Now that `ts-function` natively supports returning values and returning `Result<T, JsValue>` for errors,
 the primary API via type aliases (`pub type MyCb = fn(...) -> ...`) handles almost all use cases.
