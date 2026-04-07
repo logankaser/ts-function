@@ -1,26 +1,26 @@
-use ts_function::ts_function;
+use ts_function::ts;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
 
-#[ts_function]
-pub type CbString = fn(a: String);
+#[ts]
+pub type FnString = fn(a: String);
 
-#[ts_function]
-pub type CbIntoString = fn(a: impl Into<String>);
+#[ts]
+pub type FnIntoString = fn(a: impl Into<String>);
 
 #[wasm_bindgen(module = "/tests/types.js")]
 extern "C" {
-    fn get_cb() -> js_sys::Function;
-    fn get_cb_state() -> String;
+    fn get_func() -> js_sys::Function;
+    fn get_func_state() -> String;
 }
 
 #[wasm_bindgen_test]
 fn test_complex_types() {
-    let cb_string = CbString::from(get_cb());
-    cb_string.call("hello".to_string()).unwrap();
-    assert_eq!(get_cb_state(), "hello");
+    let func_string = FnString::from(get_func());
+    func_string.call("hello".to_string()).unwrap();
+    assert_eq!(get_func_state(), "hello");
 
-    let cb_into_string = CbIntoString::from(get_cb());
-    cb_into_string.call("world").unwrap(); // Passing &str to impl Into<String>
-    assert_eq!(get_cb_state(), "world");
+    let func_into_string = FnIntoString::from(get_func());
+    func_into_string.call("world").unwrap(); // Passing &str to impl Into<String>
+    assert_eq!(get_func_state(), "world");
 }

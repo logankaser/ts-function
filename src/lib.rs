@@ -11,28 +11,81 @@ mod ts_macro;
 
 use crate::ts_type::ToTsType;
 
-/// Generates TypeScript interface bindings from a Rust struct.
+/// Generates TypeScript type aliases and `wasm-bindgen` ABI trait implementations
+/// for Rust items.
 ///
-/// This attribute works identically to the upstream `ts-macro` attribute, allowing
-/// the struct to define a TypeScript interface with property bindings seamlessly
-/// mapped to Javascript functions.
+/// This attribute can be applied to:
+/// 1. **Structs**: Generates a TypeScript interface and property bindings.
+/// 2. **Enums**: Automatically applies `#[wasm_bindgen]` (supports C-style enums).
+/// 3. **Type Aliases**: Generates a TypeScript type alias and a typed function wrapper.
+/// 4. **Impl Blocks**: Generates a typed function wrapper for a `call` method.
 ///
-/// It generates:
-/// 1. A TypeScript interface string exposed as a custom wasm section
-/// 2. Extensible bindings and trait implementations
+/// # Examples
 ///
-/// The default behavior for field names is to convert to `camelCase` for Javascript conventions.
-/// However, you can opt-out by adding `rename_all = "none"`:
+/// **Struct Usage**
 ///
 /// ```rust,ignore
-/// #[ts(rename_all = "none")]
+/// #[ts(rename_all = "camelCase")]
 /// struct MyStruct {
-///     my_field_name: String, // Will remain "my_field_name" in TypeScript
+///     field_name: String,
+/// }
+/// ```
+///
+/// **Enum Usage**
+///
+/// ```rust,ignore
+/// #[ts]
+/// enum Status { Active, Inactive }
+/// ```
+///
+/// **Function Wrapper Usage**
+///
+/// ```rust,ignore
+/// #[ts]
+/// pub type OnReady = fn(msg: String);
+///
+/// #[ts]
+/// struct AppFunctions {
+///     on_ready: OnReady,
 /// }
 /// ```
 #[proc_macro_attribute]
 pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
-    ts_macro::ts(attr, input)
+    let item = parse_macro_input!(input as Item);
+    ts_internal_dispatcher(attr.into(), item).into()
+}
+
+fn ts_internal_dispatcher(attr: proc_macro2::TokenStream, item: Item) -> proc_macro2::TokenStream {
+    let attr_args = attr.clone();
+
+    match &item {
+        Item::Struct(item_struct) => {
+            let args = match syn::parse2::<ts_macro::TsArgs>(attr_args) {
+                Ok(args) => args,
+                Err(err) => return err.to_compile_error(),
+            };
+            ts_macro::ts_internal(args, item_struct.clone())
+        }
+        Item::Enum(item_enum) => {
+            quote! {
+                #[::wasm_bindgen::prelude::wasm_bindgen]
+                #item_enum
+            }
+        }
+        Item::Type(item_type) => match parse_item_type(item_type) {
+            Ok(tokens) => tokens,
+            Err(err) => err.to_compile_error(),
+        },
+        Item::Impl(item_impl) => match parse_item_impl(item_impl) {
+            Ok(tokens) => tokens,
+            Err(err) => err.to_compile_error(),
+        },
+        _ => Error::new_spanned(
+            item,
+            "#[ts] can only be applied to a struct, enum, type alias, or impl block",
+        )
+        .to_compile_error(),
+    }
 }
 
 struct ParsedSignature<'a> {
@@ -41,78 +94,12 @@ struct ParsedSignature<'a> {
     output: &'a ReturnType,
 }
 
-/// Generates TypeScript type aliases and `wasm-bindgen` ABI trait implementations
-/// for Rust callback wrapper structs.
-///
-/// `ts-function` acts as a bridge for function/callback types in pure Rust when
-/// interoperating with TypeScript using `ts-macro`. It can be applied to either
-/// type aliases (`pub type MyCb = fn(args: ...)`) or `impl` blocks (the "escape hatch").
-///
-/// # Examples
-///
-/// **Basic Usage**
-///
-/// ```rust,ignore
-/// use ts_function::{ts, ts_function};
-///
-/// #[ts_function]
-/// pub type OnReadyCb = fn(msg: String);
-///
-/// #[ts]
-/// struct AppCallbacks {
-///     on_ready: OnReadyCb,
-/// }
-/// ```
-///
-/// **Escape Hatch Usage**
-///
-/// For completely custom serialization or embedding specific side-effects and error
-/// handling directly into the callback execution:
-///
-/// ```rust,ignore
-/// use wasm_bindgen::prelude::*;
-/// use ts_function::ts_function;
-///
-/// pub struct CustomLoggingCallback(pub js_sys::Function);
-///
-/// #[ts_function]
-/// impl CustomLoggingCallback {
-///     pub fn call(&self, val: f64) {
-///         // Call the JS function and handle errors internally
-///         let _ = self.0.call1(
-///             &wasm_bindgen::JsValue::NULL,
-///             &wasm_bindgen::JsValue::from_f64(val),
-///         );
-///     }
-/// }
-/// ```
-#[proc_macro_attribute]
-pub fn ts_function(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as Item);
-
-    let result = match &item {
-        Item::Type(item_type) => parse_item_type(item_type),
-        Item::Impl(item_impl) => parse_item_impl(item_impl),
-        _ => {
-            return Error::new_spanned(
-                item,
-                "#[ts_function] can only be applied to a type alias or an impl block",
-            )
-            .to_compile_error()
-            .into();
-        }
-    };
-
-    match result {
-        Ok(tokens) => tokens.into(),
-        Err(err) => err.to_compile_error().into(),
-    }
-}
-
 fn generate_return_conversion(ty: &Type) -> syn::Result<proc_macro2::TokenStream> {
     match ty {
         Type::Path(type_path) => {
-            let segment = type_path.path.segments.last().unwrap();
+            let segment = type_path.path.segments.last().ok_or_else(|| {
+                Error::new_spanned(ty, "Expected a type segment")
+            })?;
             let ident = &segment.ident;
             let ident_str = ident.to_string();
 
@@ -148,7 +135,7 @@ fn generate_return_conversion(ty: &Type) -> syn::Result<proc_macro2::TokenStream
                             "Expected generic argument for Option",
                         ));
                     };
-                    let syn::GenericArgument::Type(inner_ty) = args.args.first().unwrap() else {
+                    let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() else {
                         return Err(Error::new_spanned(ty, "Expected type argument for Option"));
                     };
                     let inner_conversion = generate_return_conversion(inner_ty)?;
@@ -535,21 +522,77 @@ mod tests {
     }
 
     #[test]
+    fn test_dispatcher_item_struct() {
+        let input: Item = parse_quote! {
+            pub struct MyStruct {
+                pub field: f64,
+            }
+        };
+        let attr = quote! {};
+        let result = ts_internal_dispatcher(attr, input);
+        let result_str = result.to_string();
+
+        assert!(result_str.contains("interface IMyStruct"));
+        assert!(result_str.contains("field: number;"));
+    }
+
+    #[test]
+    fn test_dispatcher_item_type() {
+        let input: Item = parse_quote! {
+            pub type OnClick = fn(x: f64);
+        };
+        let attr = quote! {};
+        let result = ts_internal_dispatcher(attr, input);
+        let result_str = result.to_string();
+
+        assert!(result_str.contains("type OnClick = (x: number) => void;"));
+        assert!(result_str.contains("pub struct OnClick (pub :: js_sys :: Function) ;"));
+    }
+
+    #[test]
+    fn test_dispatcher_item_impl() {
+        let input: Item = parse_quote! {
+            impl OnScroll {
+                pub fn call(&self, y: f64) {}
+            }
+        };
+        let attr = quote! {};
+        let result = ts_internal_dispatcher(attr, input);
+        let result_str = result.to_string();
+
+        assert!(result_str.contains("type OnScroll = (y: number) => void;"));
+        assert!(result_str.contains("impl :: wasm_bindgen :: describe :: WasmDescribe for OnScroll"));
+    }
+
+    #[test]
+    fn test_enum_item() {
+        let input: Item = parse_quote! {
+            pub enum Status { Active, Inactive }
+        };
+        let attr = quote! {};
+        let result = ts_internal_dispatcher(attr, input);
+        let result_str = result.to_string();
+
+        assert!(result_str.contains("# [:: wasm_bindgen :: prelude :: wasm_bindgen]"));
+        assert!(result_str.contains("pub enum Status { Active , Inactive }"));
+    }
+
+    #[test]
     fn test_recursive_generics() {
         let item_type: ItemType = parse_quote! {
-            pub type ResultCb = fn(res: Result<String, i32>);
+            pub type ResultFn = fn(res: Result<String, i32>);
         };
         let result = parse_item_type(&item_type).unwrap();
         let result_str = result.to_string();
 
-        assert!(result_str.contains("type ResultCb = (res: Result<string, number>) => void;"));
+        assert!(result_str.contains("type ResultFn = (res: Result<string, number>) => void;"));
 
         let item_type: ItemType = parse_quote! {
-            pub type NestedVecCb = fn(args: Vec<Vec<f64>>);
+            pub type NestedVecFn = fn(args: Vec<Vec<f64>>);
         };
         let result = parse_item_type(&item_type).unwrap();
         let result_str = result.to_string();
 
-        assert!(result_str.contains("type NestedVecCb = (args: Float64Array[]) => void;"));
+        assert!(result_str.contains("type NestedVecFn = (args: Float64Array[]) => void;"));
     }
 }

@@ -5,7 +5,7 @@ let state = {
 };
 
 // --- Example 1 ---
-export function get_xor_callback() {
+export function get_xor_function() {
     return (a, b) => {
         let res = new Uint8Array(a.length);
         for (let i = 0; i < a.length; i++) {
@@ -17,7 +17,7 @@ export function get_xor_callback() {
 export function get_xor_result() { return state.xor_result; }
 
 // --- Example 2 ---
-export function get_throwing_callback() {
+export function get_throwing_function() {
     return (val) => {
         throw new Error("JS error with value " + val);
     };
@@ -26,7 +26,7 @@ export function get_handled_error() { return state.handled_error; }
 export function set_handled_error(err) { state.handled_error = err; }
 
 // --- Example 3 ---
-export function get_simple_cb() {
+export function get_simple_func() {
     return (msg) => {
         state.msg = msg;
     };

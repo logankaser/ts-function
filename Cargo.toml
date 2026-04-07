@@ -2,14 +2,14 @@
 name = "ts-function"
 version = "0.2.0"
 edition = "2024"
-description = "A proc-macro that generates TypeScript type aliases and wasm-bindgen ABI trait impls for Rust callback wrapper structs"
+description = "A proc-macro that generates TypeScript type aliases and wasm-bindgen ABI trait impls for Rust typed function wrappers"
 license = "MIT OR Apache-2.0"
 documentation = "https://docs.rs/ts-function"
 readme = "README.md"
 homepage = "https://github.com/logankaser/ts-function"
 repository = "https://github.com/logankaser/ts-function"
 categories = ["wasm", "web-programming", "development-tools::ffi"]
-keywords = ["wasm-bindgen", "typescript", "callback", "macro"]
+keywords = ["wasm-bindgen", "typescript", "function", "macro"]
 include = ["Cargo.toml", "src", "README.md", "LICENSE-MIT", "LICENSE-APACHE", "tests"]
 
 [lib]

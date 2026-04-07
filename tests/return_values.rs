@@ -1,96 +1,96 @@
-use ts_function::ts_function;
+use ts_function::ts;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
 
-#[ts_function]
-pub type SumCb = fn(a: f64, b: f64) -> f64;
+#[ts]
+pub type SumFn = fn(a: f64, b: f64) -> f64;
 
-#[ts_function]
-pub type ConcatCb = fn(a: String, b: String) -> String;
+#[ts]
+pub type ConcatFn = fn(a: String, b: String) -> String;
 
-#[ts_function]
-pub type CheckCb = fn(v: i32) -> bool;
+#[ts]
+pub type CheckFn = fn(v: i32) -> bool;
 
-#[ts_function]
-pub type IdentityCb = fn(v: JsValue) -> JsValue;
+#[ts]
+pub type IdentityFn = fn(v: JsValue) -> JsValue;
 
-#[ts_function]
-pub type BigIntCb = fn(v: u64) -> u64;
+#[ts]
+pub type BigIntFn = fn(v: u64) -> u64;
 
-#[ts_function]
-pub type VecCb = fn(v: Vec<u8>) -> Vec<u8>;
+#[ts]
+pub type VecFn = fn(v: Vec<u8>) -> Vec<u8>;
 
-#[ts_function]
-pub type BoxSliceCb = fn(v: Vec<u8>) -> Box<[u8]>;
+#[ts]
+pub type BoxSliceFn = fn(v: Vec<u8>) -> Box<[u8]>;
 
-#[ts_function]
-pub type OptionStringCb = fn(v: Option<String>) -> Option<String>;
+#[ts]
+pub type OptionStringFn = fn(v: Option<String>) -> Option<String>;
 
-#[ts_function]
-pub type ObjectCb = fn() -> js_sys::Object;
+#[ts]
+pub type ObjectFn = fn() -> js_sys::Object;
 
 #[wasm_bindgen(module = "/tests/return_values.js")]
 extern "C" {
-    fn get_sum_cb() -> js_sys::Function;
-    fn get_concat_cb() -> js_sys::Function;
-    fn get_check_cb() -> js_sys::Function;
-    fn get_identity_cb() -> js_sys::Function;
-    fn get_bigint_cb() -> js_sys::Function;
-    fn get_vec_cb() -> js_sys::Function;
-    fn get_option_cb() -> js_sys::Function;
-    fn get_object_cb() -> js_sys::Function;
+    fn get_sum_func() -> js_sys::Function;
+    fn get_concat_func() -> js_sys::Function;
+    fn get_check_func() -> js_sys::Function;
+    fn get_identity_func() -> js_sys::Function;
+    fn get_bigint_func() -> js_sys::Function;
+    fn get_vec_func() -> js_sys::Function;
+    fn get_option_func() -> js_sys::Function;
+    fn get_object_func() -> js_sys::Function;
 }
 
 #[wasm_bindgen_test]
 fn test_return_values() {
     // 1. Numbers
-    let sum_cb = SumCb::from(get_sum_cb());
-    let res = sum_cb.call(10.5, 20.5).unwrap();
+    let sum_func = SumFn::from(get_sum_func());
+    let res = sum_func.call(10.5, 20.5).unwrap();
     assert_eq!(res, 31.0);
 
     // 2. Strings
-    let concat_cb = ConcatCb::from(get_concat_cb());
-    let res = concat_cb
+    let concat_func = ConcatFn::from(get_concat_func());
+    let res = concat_func
         .call("foo".to_string(), "bar".to_string())
         .unwrap();
     assert_eq!(res, "foobar");
 
     // 3. Bools
-    let check_cb = CheckCb::from(get_check_cb());
-    assert!(check_cb.call(5).unwrap());
-    assert!(!check_cb.call(-5).unwrap());
+    let check_func = CheckFn::from(get_check_func());
+    assert!(check_func.call(5).unwrap());
+    assert!(!check_func.call(-5).unwrap());
 
     // 4. JsValue
-    let identity_cb = IdentityCb::from(get_identity_cb());
+    let identity_func = IdentityFn::from(get_identity_func());
     let val = JsValue::from_str("test");
-    let res = identity_cb.call(val.clone()).unwrap();
+    let res = identity_func.call(val.clone()).unwrap();
     assert_eq!(res, val);
 
     // 5. BigInt
-    let bigint_cb = BigIntCb::from(get_bigint_cb());
-    let res = bigint_cb.call(12345678901234567890).unwrap();
+    let bigint_func = BigIntFn::from(get_bigint_func());
+    let res = bigint_func.call(12345678901234567890).unwrap();
     assert_eq!(res, 12345678901234567890);
 
     // 6. Vec
-    let vec_cb = VecCb::from(get_vec_cb());
-    let res = vec_cb.call(vec![1, 2, 3]).unwrap();
+    let vec_func = VecFn::from(get_vec_func());
+    let res = vec_func.call(vec![1, 2, 3]).unwrap();
     assert_eq!(res, vec![2, 4, 6]);
 
     // 7. Option
-    let option_cb = OptionStringCb::from(get_option_cb());
+    let option_func = OptionStringFn::from(get_option_func());
     assert_eq!(
-        option_cb.call(Some("hi".to_string())).unwrap(),
+        option_func.call(Some("hi".to_string())).unwrap(),
         Some("hi_suffix".to_string())
     );
-    assert_eq!(option_cb.call(None).unwrap(), None);
+    assert_eq!(option_func.call(None).unwrap(), None);
 
     // 8. Box<[u8]>
-    let box_slice_cb = BoxSliceCb::from(get_vec_cb());
-    let res = box_slice_cb.call(vec![1, 2, 3]).unwrap();
+    let box_slice_func = BoxSliceFn::from(get_vec_func());
+    let res = box_slice_func.call(vec![1, 2, 3]).unwrap();
     assert_eq!(&*res, &[2, 4, 6]);
 
     // 9. JsCast fallback (Object)
-    let object_cb = ObjectCb::from(get_object_cb());
-    let res = object_cb.call().unwrap();
+    let object_func = ObjectFn::from(get_object_func());
+    let res = object_func.call().unwrap();
     assert!(res.is_instance_of::<js_sys::Object>());
 }

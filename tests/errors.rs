@@ -1,22 +1,22 @@
-use ts_function::ts_function;
+use ts_function::ts;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
 
-#[ts_function]
-pub type ThrowCb = fn();
+#[ts]
+pub type ThrowFn = fn();
 
 #[wasm_bindgen(module = "/tests/errors.js")]
 extern "C" {
-    fn get_throw_cb() -> js_sys::Function;
+    fn get_throw_func() -> js_sys::Function;
 }
 
 #[wasm_bindgen_test]
 fn test_default_behavior_returns_err() {
-    let cb = ThrowCb::from(get_throw_cb());
+    let func = ThrowFn::from(get_throw_func());
 
     // This call will throw an error in JS. Now it returns a Result::Err
     // instead of panicking.
-    let res = cb.call();
+    let res = func.call();
     assert!(res.is_err());
 
     let err = res.unwrap_err();

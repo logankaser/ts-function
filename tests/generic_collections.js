@@ -2,7 +2,7 @@ let state = {
     last_array: [],
 };
 
-export function get_array_cb() {
+export function get_array_func() {
     return (arr) => {
         state.last_array = Array.from(arr);
     };

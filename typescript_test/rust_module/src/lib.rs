@@ -1,46 +1,58 @@
-use ts_function::{ts, ts_function};
+use ts_function::ts;
 use wasm_bindgen::prelude::*;
 
-#[ts_function]
-pub type SingleArgCb = fn(msg: String);
-
-#[ts_function]
-pub type MultiArgCb = fn(a: f64, b: js_sys::Uint8Array);
-
-#[ts_function]
-pub type OptionCb = fn(val: Option<String>);
-
-#[ts_function]
-pub type ReturnValueCb = fn(a: f64) -> f64;
+#[ts]
+pub enum UserStatus {
+    Active,
+    Inactive,
+}
 
 #[ts]
-struct AppCallbacks {
-    on_ready: SingleArgCb,
-    on_data: MultiArgCb,
-    on_option: OptionCb,
-    on_calculate: ReturnValueCb,
+pub type SingleArgFn = fn(msg: String);
+
+#[ts]
+pub type MultiArgFn = fn(a: f64, b: js_sys::Uint8Array);
+
+#[ts]
+pub type OptionFn = fn(val: Option<String>);
+
+#[ts]
+pub type ReturnValueFn = fn(a: f64) -> f64;
+
+#[ts]
+pub type StatusFn = fn(status: UserStatus);
+
+#[ts]
+struct AppFunctions {
+    on_ready: SingleArgFn,
+    on_data: MultiArgFn,
+    on_option: OptionFn,
+    on_calculate: ReturnValueFn,
+    on_status: StatusFn,
 }
 
 #[wasm_bindgen]
-pub fn execute_callbacks(cbs: IAppCallbacks) {
-    let callbacks: AppCallbacks = cbs.parse();
+pub fn execute_functions(funcs: IAppFunctions) {
+    let functions: AppFunctions = funcs.parse();
 
-    callbacks
+    functions
         .on_ready
         .call("System is ready".to_string())
         .unwrap();
 
     let arr = js_sys::Uint8Array::new_with_length(3);
     arr.copy_from(&[1, 2, 3]);
-    callbacks.on_data.call(42.5, arr).unwrap();
+    functions.on_data.call(42.5, arr).unwrap();
 
-    callbacks
+    functions
         .on_option
         .call(Some("present".to_string()))
         .unwrap();
 
-    let result = callbacks.on_calculate.call(10.0).unwrap();
+    let result = functions.on_calculate.call(10.0).unwrap();
     if result != 20.0 {
         panic!("Calculation failed: expected 20.0, got {}", result);
     }
+
+    functions.on_status.call(UserStatus::Active).unwrap();
 }

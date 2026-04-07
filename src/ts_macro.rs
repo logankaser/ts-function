@@ -17,28 +17,14 @@
 
 use crate::ts_type::{ToTsType, TsType};
 use heck::{ToLowerCamelCase, ToPascalCase};
-use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input,
     punctuated::Punctuated,
     Error, Fields, FieldsNamed, Ident, ItemStruct, Meta, Token,
 };
 
-/// Return a [`TokenStream`] that expands into a formatted [`compile_error!`].
-///
-/// [`compile_error!`]: https://doc.rust-lang.org/std/macro.compile_error.html
-macro_rules! abort {
-    ($($arg:tt)*) => {{
-        let msg = format!($($arg)*);
-        return TokenStream::from(quote! {
-            compile_error!(#msg);
-        });
-    }};
-}
-
-struct TsArgs {
+pub(crate) struct TsArgs {
     name: Option<Ident>,
     extends: Option<Punctuated<Ident, Token![,]>>,
     rename_all: Option<String>,
@@ -91,10 +77,7 @@ impl Parse for TsArgs {
 }
 
 /// Generate TypeScript interface bindings from a Rust struct.
-pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as TsArgs);
-    let item = parse_macro_input!(input as ItemStruct);
-
+pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
     // Ensure the input is a struct with named fields
     let (struct_name, fields) = match &item {
         ItemStruct {
@@ -102,7 +85,11 @@ pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
             fields: Fields::Named(fields),
             ..
         } => (ident, fields),
-        _ => abort!("The `ts` attribute can only be used on structs with named fields."),
+        _ => {
+            return quote! {
+                compile_error!("The `ts` attribute can only be used on structs with named fields.");
+            };
+        }
     };
 
     let ts_name = match args.name {
@@ -141,7 +128,10 @@ pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
 
                 ts_type
             }
-            Err(err) => abort!("{}", err),
+            Err(err) => {
+                let msg = format!("{}", err);
+                return quote! { compile_error!(#msg); };
+            }
         };
 
         // Iterate over the attributes of the field to extract the `ts`
@@ -181,7 +171,13 @@ pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
                         Ok(nested) => {
                             for arg in nested {
                                 if let Meta::NameValue(nv) = arg {
-                                    let key = nv.path.get_ident().unwrap().to_string();
+                                    let key = match nv.path.get_ident() {
+                                        Some(ident) => ident.to_string(),
+                                        None => {
+                                            let msg = "Expected an identifier for the key";
+                                            return quote! { compile_error!(#msg); };
+                                        }
+                                    };
                                     match key.as_str() {
                                         "name" => {
                                             if let syn::Expr::Lit(syn::ExprLit {
@@ -192,9 +188,10 @@ pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
                                                 ts_field_name =
                                                     format_ident!("{}", lit_str.value());
                                             } else {
-                                                abort!(
+                                                let msg = format!(
                                                     "`name` for field `{field_name}` must be a string literal."
                                                 );
+                                                return quote! { compile_error!(#msg); };
                                             }
                                         }
                                         "type" => {
@@ -206,12 +203,16 @@ pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
                                                 match TsType::from_ts_str(lit_str.value().as_str())
                                                 {
                                                     Ok(ts_type) => ts_field_type = ts_type,
-                                                    Err(err) => abort!("{}", err),
+                                                    Err(err) => {
+                                                        let msg = format!("{}", err);
+                                                        return quote! { compile_error!(#msg); };
+                                                    }
                                                 }
                                             } else {
-                                                abort!(
+                                                let msg = format!(
                                                     "`type` for field `{field_name}` must be a string literal."
                                                 );
+                                                return quote! { compile_error!(#msg); };
                                             }
                                         }
                                         "optional" => {
@@ -222,38 +223,47 @@ pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
                                             {
                                                 is_optional = bool_lit.value;
                                             } else {
-                                                abort!(
+                                                let msg = format!(
                                                     "`optional` for field `{field_name}` must be a boolean literal."
                                                 );
+                                                return quote! { compile_error!(#msg); };
                                             }
                                         }
-                                        unknown => abort!(
-                                            r#"Unknown argument for field `{field}`: `{attr}`. Options are:
+                                        unknown => {
+                                            let msg = format!(
+                                                r#"Unknown argument for field `{field}`: `{attr}`. Options are:
                                     - type: The TypeScript type of the field
                                     - name: The name of the field in the TypeScript interface
                                     - optional: Whether the field is optional in TypeScript"#,
-                                            field = field_name.to_string(),
-                                            attr = unknown
-                                        ),
+                                                field = field_name,
+                                                attr = unknown
+                                            );
+                                            return quote! { compile_error!(#msg); };
+                                        }
                                     }
                                 } else {
-                                    abort!(
+                                    let msg = format!(
                                         "`ts` attribute for field `{}` must be a list of name-value pairs, e.g. `#[ts(type = \"{}\")]`.",
-                                        field_name.to_string(),
+                                        field_name,
                                         field_name.to_string().to_pascal_case()
                                     );
+                                    return quote! { compile_error!(#msg); };
                                 }
                             }
                         }
-                        Err(err) => abort!("{}", err),
+                        Err(err) => {
+                            let msg = format!("{}", err);
+                            return quote! { compile_error!(#msg); };
+                        }
                     }
                 }
                 _ => {
-                    abort!(
+                    let msg = format!(
                         "`ts` attribute for field `{}` must be a list, e.g. `#[ts(type = \"Js{}\")]`.",
-                        field_name.to_string(),
+                        field_name,
                         field_name.to_string().to_pascal_case(),
-                    )
+                    );
+                    return quote! { compile_error!(#msg); };
                 }
             }
 
@@ -364,7 +374,7 @@ pub fn ts(attr: TokenStream, input: TokenStream) -> TokenStream {
         #processed_struct
     };
 
-    TokenStream::from(expanded)
+    expanded
 }
 
 #[cfg(test)]
@@ -378,5 +388,22 @@ mod tests {
         assert_eq!(args.name.unwrap().to_string(), "MyStruct");
         assert_eq!(args.extends.unwrap().len(), 2);
         assert_eq!(args.rename_all.unwrap(), "none");
+    }
+
+    #[test]
+    fn test_ts_enum_field() {
+        let attr = quote! {};
+        let input = quote! {
+            pub struct User {
+                pub status: Status,
+            }
+        };
+        let args: TsArgs = syn::parse2(attr).unwrap();
+        let item: ItemStruct = syn::parse2(input).unwrap();
+        let result = ts_internal(args, item);
+        let result_str = result.to_string();
+
+        assert!(result_str.contains("interface IUser"));
+        assert!(result_str.contains("status: Status;"));
     }
 }
