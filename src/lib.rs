@@ -97,9 +97,11 @@ struct ParsedSignature<'a> {
 fn generate_return_conversion(ty: &Type) -> syn::Result<proc_macro2::TokenStream> {
     match ty {
         Type::Path(type_path) => {
-            let segment = type_path.path.segments.last().ok_or_else(|| {
-                Error::new_spanned(ty, "Expected a type segment")
-            })?;
+            let segment = type_path
+                .path
+                .segments
+                .last()
+                .ok_or_else(|| Error::new_spanned(ty, "Expected a type segment"))?;
             let ident = &segment.ident;
             let ident_str = ident.to_string();
 
@@ -475,6 +477,12 @@ fn generate_abi_traits(parsed: &ParsedSignature) -> syn::Result<proc_macro2::Tok
                 Self(f)
             }
         }
+
+        impl From<#struct_ident> for ::wasm_bindgen::JsValue {
+            fn from(f: #struct_ident) -> Self {
+                ::wasm_bindgen::JsValue::from(f.0)
+            }
+        }
     };
 
     Ok(generated)
@@ -561,7 +569,9 @@ mod tests {
         let result_str = result.to_string();
 
         assert!(result_str.contains("type OnScroll = (y: number) => void;"));
-        assert!(result_str.contains("impl :: wasm_bindgen :: describe :: WasmDescribe for OnScroll"));
+        assert!(
+            result_str.contains("impl :: wasm_bindgen :: describe :: WasmDescribe for OnScroll")
+        );
     }
 
     #[test]

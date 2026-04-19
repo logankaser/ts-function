@@ -20,10 +20,18 @@ handle raw `JsValue` conversions in Rust.
 pure Rust, automatically generating the correct TypeScript types (`(args: ...)
 => void`) and implementing the `wasm-bindgen` ABI traits required to pass those
 functions across the Wasm boundary safely.
+In Javascript land, it's common for libaries to take an object of functions to
+customize behavior, and this libary makes it easy to write code like that.
 
 ## Example: Unified `#[ts]` Attribute
 
-The `#[ts]` attribute is a one-stop-shop for generating TypeScript bindings for structs, enums, and functions.
+The `#[ts]` attribute macro can generate TypeScript bindings for structs, enums, and functions.
+For enums it uses wasm_bindgen's enum handling, for structs it behaves simular to ts-macro (stil hoping to upstream oneday),
+and for functions which is the namesake and most complex case, they are generated from type aliases or impl blocks.
+So on the Rust side, Typescript functions are represented by a struct like:
+`struct TypedFunction(Function)` which implements a `call` pseudo-trait.
+Call provides strong typing and type conversion, as well as easy result chaining.
+The newtype struct allows us to hold the function handle.
 
 ```rust
 use wasm_bindgen::prelude::*;
@@ -42,7 +50,7 @@ pub type MultiArgFn = fn(a: f64, b: js_sys::Uint8Array);
 
 // 3. Use `#[ts]` to create a struct containing your function wrappers
 #[ts]
-struct AppCallbacks {
+struct AppInit {
     on_ready: SingleArgFn,
     on_data: MultiArgFn,
     status: UserStatus,
@@ -50,7 +58,7 @@ struct AppCallbacks {
 
 // 4. Export a function that accepts your struct from JS
 #[wasm_bindgen]
-pub fn execute_callbacks(cbs: IAppCallbacks) {
+pub fn execute_callbacks(cbs: IAppInit) {
     // `.parse()` safely extracts the `js_sys::Function` objects into your strongly-typed wrappers
     let callbacks: AppCallbacks = cbs.parse();
     
@@ -112,12 +120,34 @@ let result: f64 = calculate_fn.call(10.0).unwrap();
 | `JsValue` | `any` | |
 | `js_sys::Object` | `object` | |
 | Rust Struct | Typescript Object | Any `JsCast` type (including `ts` interfaces) |
+| Enum | Enum | Limited to C-like enums, as ts-function uses wasm-binden for enums |
 
 ## Return Values & Performance
 
 The `#[ts]` macro supports returning values from JavaScript back into
 Rust. It handles standard primitives, strings, options, and even numeric vectors
 (via `TypedArray`).
+
+### Rust Structs to Javascript Objects (Round-Trip)
+
+Structs annotated with `#[ts]` automatically implement `Into<JsValue>`. This allows you to effortlessly construct Rust structs and pass them back to Javascript or return them from function calls natively:
+
+```rust
+#[ts]
+pub struct BasicInfo {
+    pub name: String,
+    pub age: f64,
+}
+
+// In your wasm boundary:
+let info = BasicInfo {
+    name: "Alice".to_string(),
+    age: 30.0,
+};
+
+// Converts 1-to-1 to a Javascript Object: `{ name: "Alice", age: 30.0 }`
+let js_val: JsValue = info.into();
+```
 
 ### Zero-Copy Performance
 
@@ -133,10 +163,10 @@ pub type LargeDataFn = fn() -> js_sys::Uint8Array;
 let arr: js_sys::Uint8Array = large_data_fn.call().unwrap();
 ```
 
-## Advanced Usage: The Escape Hatch
+## Advanced Usage / The Escape Hatch
 
 If you need completely custom serialization or want to embed specific side-effects and error handling directly into the function execution, you can use the escape hatch.
-By applying `#[ts]` to an `impl` block for a tuple-struct wrapping `js_sys::Function`, you take complete control of the `call` method's implementation.
+By applying `#[ts]` to an `impl` block for a tuple-struct wrapping `js_sys::Function`, you can customize the `call` method's implementation.
 
 **`ts-function` will still parse your `call` method's signature and automatically generate the correct TypeScript interface for it!**
 

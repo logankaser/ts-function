@@ -19,9 +19,9 @@ use crate::ts_type::{ToTsType, TsType};
 use heck::{ToLowerCamelCase, ToPascalCase};
 use quote::{format_ident, quote};
 use syn::{
+    Error, Fields, FieldsNamed, Ident, ItemStruct, Meta, Token,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
-    Error, Fields, FieldsNamed, Ident, ItemStruct, Meta, Token,
 };
 
 pub(crate) struct TsArgs {
@@ -99,6 +99,7 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
     let mut ts_fields = vec![];
     let mut field_conversions = vec![];
     let mut field_getters = vec![];
+    let mut field_setters = vec![];
     let mut processed_fields = vec![];
 
     // Iterate over the fields of the struct to generate entries for the
@@ -297,6 +298,16 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
             #field_name: js_value.#field_name()
         });
 
+        // Add a setter for the `Into<JsValue>` implementation
+        let ts_field_name_str = ts_field_name.to_string();
+        field_setters.push(quote! {
+            ::js_sys::Reflect::set(
+                &obj,
+                &::wasm_bindgen::JsValue::from_str(#ts_field_name_str),
+                &value.#field_name.into()
+            ).unwrap();
+        });
+
         // Add the processed field to the struct
         processed_fields.push(field);
     }
@@ -349,6 +360,21 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
             /// Convert the JS binding into the Rust struct
             fn from(js_value: #ts_name) -> Self {
                 js_value.parse()
+            }
+        }
+
+        impl From<#struct_name> for ::wasm_bindgen::JsValue {
+            fn from(value: #struct_name) -> Self {
+                let obj = ::js_sys::Object::new();
+                #( #field_setters )*
+                ::wasm_bindgen::JsValue::from(obj)
+            }
+        }
+
+        impl From<#struct_name> for #ts_name {
+            fn from(value: #struct_name) -> Self {
+                use ::wasm_bindgen::JsCast;
+                ::wasm_bindgen::JsValue::from(value).unchecked_into::<#ts_name>()
             }
         }
 

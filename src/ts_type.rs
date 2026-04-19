@@ -42,7 +42,7 @@ macro_rules! ts_tt {
   ([ $first:tt $($items:tt)* ]) => {{
       let tuple = crate::ts_type::TsType::Tuple(vec![]);
       let mut stack = vec![tuple];
-      let mut first = ts_tt!($first);
+      let first = ts_tt!($first);
       build_ts_type!(stack first $($items)*)
   }};
   ($base:tt) => {{ crate::ts_type::TsType::Base(stringify!($base).to_string()) }};
@@ -50,46 +50,53 @@ macro_rules! ts_tt {
 
 macro_rules! build_ts_type {
   ($stack:ident $ty:ident [] $($rest:tt)*) => {{
-      $ty = $ty.in_array();
+      let $ty = $ty.in_array();
       build_ts_type!($stack $ty $($rest)*)
   }};
   ($stack:ident $ty:ident [ $($keys:tt)+ ] $($rest:tt)*) => {{
-      $ty = $ty.property(Box::new(ts_type!($($keys)+)));
+      let $ty = $ty.property(Box::new(ts_type!($($keys)+)));
       build_ts_type!($stack $ty $($rest)*)
   }};
   ($stack:ident $ty:ident & $other:tt $($rest:tt)*) => {{
       let intersection = crate::ts_type::TsType::Intersection(vec![$ty]);
       $stack.push(intersection);
-      $ty = ts_tt!($other);
+      let $ty = ts_tt!($other);
       build_ts_type!($stack $ty $($rest)*)
   }};
   ($stack:ident $ty:ident | $other:tt $($rest:tt)*) => {{
       let _union = crate::ts_type::TsType::Union(vec![$ty]);
       $stack.push(_union);
-      $ty = ts_tt!($other);
+      let $ty = ts_tt!($other);
       build_ts_type!($stack $ty $($rest)*)
   }};
   ($stack:ident $ty:ident < $arg:tt $($rest:tt)*) => {{
-      $ty = $ty.as_generic(vec![]);
+      let $ty = $ty.as_generic(vec![]);
       $stack.push($ty);
-      let mut arg = ts_tt!($arg);
-      build_ts_type!($stack arg $($rest)*)
+      let $arg = ts_tt!($arg);
+      build_ts_type!($stack $arg $($rest)*)
   }};
   ($stack:ident $ty:ident , $next:tt $($rest:tt)*) => {{
       let top: crate::ts_type::TsType = $stack.pop().unwrap_or_else(|| {
           panic!("Unexpected `,` found.");
       });
       $stack.push(top.join($ty).unwrap());
-      let mut next = ts_tt!($next);
-      build_ts_type!($stack next $($rest)*)
+      #[allow(unused_mut)]
+      let mut __next = ts_tt!($next);
+      build_ts_type!($stack __next $($rest)*)
   }};
   ($stack:ident $arg:ident > $($rest:tt)*) => {{
+
       let mut ty = $arg;
       loop {
-          let top: crate::ts_type::TsType = $stack.pop().unwrap_or_else(|| { panic!("Unmatched `>` found."); });
+          let top: crate::ts_type::TsType = $stack.pop().unwrap_or_else(|| {
+              panic!("Unmatched `>` found.");
+          });
           ty = top.join(ty).unwrap();
-          if let crate::ts_type::TsType::Generic(_, _) = ty { break; }
-          else if $stack.is_empty() { panic!("Unmatched `>` found."); }
+          if let crate::ts_type::TsType::Generic(_, _) = ty {
+              break;
+          } else if $stack.is_empty() {
+              panic!("Unmatched `>` found.");
+          }
       }
       build_ts_type!($stack ty $($rest)*)
   }};
@@ -97,15 +104,23 @@ macro_rules! build_ts_type {
       let mut ty = $arg;
       let mut count = 0;
       loop {
-          let top: crate::ts_type::TsType = $stack.pop().unwrap_or_else(|| { panic!("Unmatched `>` found."); });
+          let top: crate::ts_type::TsType = $stack.pop().unwrap_or_else(|| {
+              panic!("Unmatched `>` found.");
+          });
           ty = top.join(ty).unwrap();
-          if let crate::ts_type::TsType::Generic(_, _) = ty { count += 1; }
-          if count == 2 { break; }
-          else if $stack.is_empty() { panic!("Unmatched `>` found."); }
+          if let crate::ts_type::TsType::Generic(_, _) = ty {
+              count += 1;
+          }
+          if count == 2 {
+              break;
+          } else if $stack.is_empty() {
+              panic!("Unmatched `>` found.");
+          }
       }
       build_ts_type!($stack ty $($rest)*)
   }};
   ($stack:ident $ty:ident) => {{
+      #[allow(unused_mut)]
       let mut ty = $ty;
       for _ in 0..$stack.len() {
           let top: crate::ts_type::TsType = $stack.pop().unwrap();
@@ -118,30 +133,35 @@ macro_rules! build_ts_type {
 macro_rules! ts_type {
   (| $member:tt $($rest:tt)*) => {{
       let _union = crate::ts_type::TsType::Union(vec![]);
-      let mut stack = vec![_union];
-      let mut member = ts_tt!($member);
-      build_ts_type!(stack member $($rest)*)
+      #[allow(unused_mut)]
+      let mut __stack = vec![_union];
+      let __member = ts_tt!($member);
+      build_ts_type!(__stack __member $($rest)*)
   }};
   ($elem:tt [] $($rest:tt)*) => {{
-      let mut stack = vec![];
-      let mut array = crate::ts_type::TsType::Array(Box::new(ts_tt!($elem)));
-      build_ts_type!(stack array $($rest)*)
+      #[allow(unused_mut)]
+      let mut __stack = vec![];
+      let __array = crate::ts_type::TsType::Array(Box::new(ts_tt!($elem)));
+      build_ts_type!(__stack __array $($rest)*)
   }};
   ($object:tt [ $($key:tt)+ ] $($rest:tt)*) => {{
-      let mut stack = vec![];
-      let object = crate::ts_type::TsType::IndexedAccess(Box::new(ts_tt!($object)), Box::new(ts_type!($($key)+)));
-      build_ts_type!(stack object $($rest)*)
+      #[allow(unused_mut)]
+      let mut __stack = vec![];
+      let __object = crate::ts_type::TsType::IndexedAccess(Box::new(ts_tt!($object)), Box::new(ts_type!($($key)+)));
+      build_ts_type!(__stack __object $($rest)*)
   }};
   ($generic:tt < $arg:tt $($rest:tt)*) => {{
-      let generic = crate::ts_type::TsType::Generic(Box::new(ts_tt!($generic)), vec![]);
-      let mut stack = vec![generic];
-      let mut arg = ts_tt!($arg);
-      build_ts_type!(stack arg $($rest)*)
+      let __generic = crate::ts_type::TsType::Generic(Box::new(ts_tt!($generic)), vec![]);
+      #[allow(unused_mut)]
+      let mut __stack = vec![__generic];
+      let __arg = ts_tt!($arg);
+      build_ts_type!(__stack __arg $($rest)*)
   }};
   ($base:tt $($rest:tt)*) => {{
-      let mut stack = vec![];
-      let base = ts_tt!($base);
-      build_ts_type!(stack base $($rest)*)
+      #[allow(unused_mut)]
+      let mut __stack = vec![];
+      let __base = ts_tt!($base);
+      build_ts_type!(__stack __base $($rest)*)
   }};
 }
 
@@ -1013,4 +1033,234 @@ fn match_typed_array(rust_type: &str) -> Option<TsType> {
         _ => return None,
     };
     Some(TsType::Base(array_name.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_contains() {
+        let base = ts_type!(string);
+        assert!(base.contains(&ts_type!(string)));
+        assert!(!base.contains(&ts_type!(number)));
+
+        let paren = ts_type!((string));
+        assert!(paren.contains(&ts_type!((string))));
+        assert!(paren.contains(&ts_type!(string)));
+        assert!(!paren.contains(&ts_type!(number)));
+
+        let array = ts_type!(string[]);
+        assert!(array.contains(&ts_type!(string[])));
+        assert!(array.contains(&ts_type!(string)));
+        assert!(!array.contains(&ts_type!(number)));
+
+        let tuple = ts_type!([string, number]);
+        assert!(tuple.contains(&ts_type!([string, number])));
+        assert!(tuple.contains(&ts_type!(string)));
+        assert!(tuple.contains(&ts_type!(number)));
+        assert!(!tuple.contains(&ts_type!(boolean)));
+
+        let union = ts_type!(string | number);
+        assert!(union.contains(&ts_type!(string | number)));
+        assert!(union.contains(&ts_type!(string)));
+        assert!(union.contains(&ts_type!(number)));
+        assert!(!union.contains(&ts_type!(boolean)));
+
+        let intersection = ts_type!(string & number);
+        assert!(intersection.contains(&ts_type!(string & number)));
+        assert!(intersection.contains(&ts_type!(string)));
+        assert!(intersection.contains(&ts_type!(number)));
+        assert!(!intersection.contains(&ts_type!(boolean)));
+
+        let generic = ts_type!(Set<string, number>);
+        assert!(generic.contains(&ts_type!(Set<string, number>)));
+        assert!(generic.contains(&ts_type!(Set)));
+        assert!(generic.contains(&ts_type!(string)));
+        assert!(generic.contains(&ts_type!(number)));
+        assert!(!generic.contains(&ts_type!(boolean)));
+
+        let indexed_access = ts_type!(Car[string]);
+        assert!(indexed_access.contains(&ts_type!(Car[string])));
+        assert!(indexed_access.contains(&ts_type!(Car)));
+        assert!(indexed_access.contains(&ts_type!(string)));
+        assert!(!indexed_access.contains(&ts_type!(number)));
+    }
+
+    #[test]
+    fn test_formatting() {
+        let base = ts_type!(string);
+        assert_eq!(base.to_string(), "string");
+
+        #[rustfmt::skip]
+        let paren = ts_type!((  string |     number ));
+        assert_eq!(paren.to_string(), "(string | number)");
+
+        #[rustfmt::skip]
+        let array = ts_type!(string  [  ]);
+        assert_eq!(array.to_string(), "string[]");
+
+        #[rustfmt::skip]
+        let generic = ts_type!(Set< string,   number >);
+        assert_eq!(generic.to_string(), "Set<string, number>");
+
+        #[rustfmt::skip]
+        let _union = ts_type!(
+            | string
+            | number
+            | boolean
+        );
+        assert_eq!(_union.to_string(), "string | number | boolean");
+
+        #[rustfmt::skip]
+        let intersection = ts_type!(  Foo   &  Bar &     Baz);
+        assert_eq!(intersection.to_string(), "Foo & Bar & Baz");
+
+        #[rustfmt::skip]
+        let wrapped_intersection = ts_type!(Foo |  Bar   & Baz);
+        assert_eq!(wrapped_intersection.to_string(), "Foo | (Bar & Baz)");
+
+        let template_string = TsType::from_ts_str("`0x${string}`");
+        assert_eq!(template_string.unwrap().to_string(), "`0x${string}`");
+    }
+
+    #[test]
+    fn test_variable_parsing() {
+        let base = ts_type!(string);
+        let generic = ts_type!(Set<string>);
+        let group = ts_type!((string | number));
+        let intersection = ts_type!(string & number);
+        let _union = ts_type!(string | number);
+
+        //  Single variable //
+
+        let single = ts_type!((#base));
+        assert_eq!(single.to_string(), "string",);
+
+        let single_generic = ts_type!((#generic));
+        assert_eq!(single_generic.to_string(), "Set<string>");
+
+        let single_group = ts_type!((#group));
+        assert_eq!(single_group.to_string(), "(string | number)");
+
+        let single_intersection = ts_type!((#intersection));
+        assert_eq!(single_intersection.to_string(), "string & number");
+
+        let single_union = ts_type!((#_union));
+        assert_eq!(single_union.to_string(), "string | number");
+
+        // Generics //
+
+        let generic = ts_type!(Set<(#base)>);
+        assert_eq!(generic.to_string(), "Set<string>");
+
+        let generic_two = ts_type!(Set<(#base), (#_union)>);
+        assert_eq!(generic_two.to_string(), "Set<string, string | number>");
+
+        // Unions //
+
+        let start_union = ts_type!((#base) | true | false);
+        assert_eq!(start_union.to_string(), "string | true | false");
+
+        let mid_union = ts_type!(true | (#base) | false);
+        assert_eq!(mid_union.to_string(), "true | string | false");
+
+        let end_union = ts_type!(true | false | (#base));
+        assert_eq!(end_union.to_string(), "true | false | string");
+
+        let start_union_pair = ts_type!((#base) | true);
+        assert_eq!(start_union_pair.to_string(), "string | true");
+
+        let end_union_pair = ts_type!(true | (#base));
+        assert_eq!(end_union_pair.to_string(), "true | string");
+
+        let var_union = ts_type!((#base) | (#generic) | (#group));
+        assert_eq!(
+            var_union.to_string(),
+            "string | Set<string> | (string | number)"
+        );
+
+        let var_union_pair = ts_type!((#base) | (#generic));
+        assert_eq!(var_union_pair.to_string(), "string | Set<string>");
+
+        // Intersections //
+
+        let start_intersection = ts_type!((#base) & true & false);
+        assert_eq!(start_intersection.to_string(), "string & true & false");
+
+        let mid_intersection = ts_type!(true & (#base) & false);
+        assert_eq!(mid_intersection.to_string(), "true & string & false");
+
+        let end_intersection = ts_type!(true & false & (#base));
+        assert_eq!(end_intersection.to_string(), "true & false & string");
+
+        let start_intersection_pair = ts_type!((#base) & true);
+        assert_eq!(start_intersection_pair.to_string(), "string & true");
+
+        let end_intersection_pair = ts_type!(true & (#base));
+        assert_eq!(end_intersection_pair.to_string(), "true & string");
+
+        let var_intersection = ts_type!((#base) & (#generic) & (#group));
+        assert_eq!(
+            var_intersection.to_string(),
+            "string & Set<string> & (string | number)"
+        );
+
+        let var_intersection_pair = ts_type!((#base) & (#generic));
+        assert_eq!(var_intersection_pair.to_string(), "string & Set<string>");
+    }
+
+    #[test]
+    fn test_try_from_type() {
+        use syn::parse_quote;
+
+        let ty: syn::Type = parse_quote!(Option<String>);
+        assert_eq!(
+            TsType::try_from(&ty).unwrap().to_string(),
+            "string | undefined"
+        );
+
+        let ty: syn::Type = parse_quote!(Vec<u32>);
+        assert_eq!(TsType::try_from(&ty).unwrap().to_string(), "Uint32Array");
+
+        let ty: syn::Type = parse_quote!(&[u8]);
+        assert_eq!(TsType::try_from(&ty).unwrap().to_string(), "Uint8Array");
+
+        let ty: syn::Type = parse_quote!(impl Into<f64>);
+        assert_eq!(TsType::try_from(&ty).unwrap().to_string(), "number");
+
+        let ty: syn::Type = parse_quote!(JsValue);
+        assert_eq!(TsType::try_from(&ty).unwrap().to_string(), "any");
+
+        let ty: syn::Type = parse_quote!(usize);
+        assert_eq!(TsType::try_from(&ty).unwrap().to_string(), "bigint");
+
+        let ty: syn::Type = parse_quote!(Result<String, i32>);
+        assert_eq!(
+            TsType::try_from(&ty).unwrap().to_string(),
+            "Result<string, number>"
+        );
+
+        let ty: syn::Type = parse_quote!(Arc<[u8]>);
+        assert_eq!(TsType::try_from(&ty).unwrap().to_string(), "Uint8Array");
+
+        let ty: syn::Type = parse_quote!(Box<Vec<f64>>);
+        assert_eq!(TsType::try_from(&ty).unwrap().to_string(), "Float64Array");
+
+        let ty: syn::Type = parse_quote!(Rc<String>);
+        assert_eq!(TsType::try_from(&ty).unwrap().to_string(), "string");
+    }
+
+    #[test]
+    fn test_tuple_vs_array_parsing() {
+        let t = TsType::from_ts_str("[number]").unwrap();
+        assert!(matches!(t, TsType::Tuple(_)), "Expected Tuple, got {:?}", t);
+
+        let t2 = TsType::from_ts_str("number[]").unwrap();
+        assert!(
+            matches!(t2, TsType::Array(_)),
+            "Expected Array, got {:?}",
+            t2
+        );
+    }
 }
