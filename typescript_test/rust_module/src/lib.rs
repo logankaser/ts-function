@@ -23,7 +23,7 @@ pub type ReturnValueFn = fn(a: f64) -> f64;
 pub type StatusFn = fn(status: UserStatus);
 
 #[ts]
-struct AppFunctions {
+pub struct AppFunctions {
     on_ready: SingleArgFn,
     on_data: MultiArgFn,
     on_option: OptionFn,
@@ -32,9 +32,7 @@ struct AppFunctions {
 }
 
 #[wasm_bindgen]
-pub fn execute_functions(funcs: IAppFunctions) {
-    let functions: AppFunctions = funcs.parse();
-
+pub fn execute_functions(functions: AppFunctions) {
     functions
         .on_ready
         .call("System is ready".to_string())

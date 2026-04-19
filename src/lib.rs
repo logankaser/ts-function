@@ -540,7 +540,7 @@ mod tests {
         let result = ts_internal_dispatcher(attr, input);
         let result_str = result.to_string();
 
-        assert!(result_str.contains("interface IMyStruct"));
+        assert!(result_str.contains("export interface MyStruct"));
         assert!(result_str.contains("field: number;"));
     }
 

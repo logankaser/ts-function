@@ -1,5 +1,5 @@
 import { UserStatus, execute_functions } from "./pkg/rust_module.js";
-import type { IAppFunctions } from "./pkg/rust_module.js";
+import type { AppFunctions } from "./pkg/rust_module.js";
 
 let readyMsg = "";
 let dataValue = 0;
@@ -7,7 +7,7 @@ let dataArray = new Uint8Array(0);
 let optionVal: string | undefined = "";
 let statusVal: UserStatus | undefined = undefined;
 
-const functions: IAppFunctions = {
+const functions: AppFunctions = {
   onReady: (msg: string) => {
     readyMsg = msg;
   },

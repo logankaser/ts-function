@@ -58,10 +58,7 @@ struct AppInit {
 
 // 4. Export a function that accepts your struct from JS
 #[wasm_bindgen]
-pub fn execute_callbacks(cbs: IAppInit) {
-    // `.parse()` safely extracts the `js_sys::Function` objects into your strongly-typed wrappers
-    let callbacks: AppCallbacks = cbs.parse();
-    
+pub fn execute_callbacks(callbacks: AppInit) {
     // Call the functions! Arguments are automatically converted to `JsValue`.
     // The `call` method returns a `Result<(), JsValue>` forwarding any JS exceptions.
     callbacks.on_ready.call("System is ready".to_string()).unwrap();
@@ -85,13 +82,13 @@ export enum UserStatus {
 type SingleArgFn = (msg: string) => void;
 type MultiArgFn = (a: number, b: Uint8Array) => void;
 
-interface IAppCallbacks {
+interface AppInit {
     onReady: SingleArgFn;
     onData: MultiArgFn;
     status: UserStatus;
 }
 
-export function execute_callbacks(cbs: IAppCallbacks): void;
+export function execute_callbacks(callbacks: AppInit): void;
 ```
 
 ### Example: Returning a Value
@@ -147,6 +144,26 @@ let info = BasicInfo {
 
 // Converts 1-to-1 to a Javascript Object: `{ name: "Alice", age: 30.0 }`
 let js_val: JsValue = info.into();
+```
+
+### Deferred Parsing
+
+When you accept a `#[ts]` struct like `AppInit` as an argument, `wasm-bindgen` automatically parses and clones the JavaScript object properties into the Rust struct across the Wasm boundary. If your struct is very large or you only need to access a single property conditionally, this full cloning might be a performance bottleneck.
+
+To solve this, `ts-function` additionally generates an `I`-prefixed JS binding (e.g., `IAppInit` for `AppInit`). You can accept this `I`-prefixed type in your `#[wasm_bindgen]` signatures to accept a raw `JsValue` reference instead.
+
+This allows you to either access properties dynamically via the generated getters (e.g., `cbs.status()`), or conditionally do a full Rust struct conversion using the generated `.parse()` method:
+
+```rust
+#[wasm_bindgen]
+pub fn execute_callbacks_deferred(cbs: IAppInit) {
+    // We only want to run the expensive parse if the user is active
+    if cbs.status() == UserStatus::Active {
+        // `.parse()` extracts all properties from JS into your `AppInit` struct
+        let callbacks: AppInit = cbs.parse();
+        callbacks.on_ready.call("System is ready".to_string()).unwrap();
+    }
+}
 ```
 
 ### Zero-Copy Performance

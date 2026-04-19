@@ -92,10 +92,11 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
         }
     };
 
-    let ts_name = match args.name {
+    let binding_name = match args.name {
         Some(name) => format_ident!("{}", name),
         None => format_ident!("I{}", struct_name),
     };
+    let ts_interface_name = struct_name.to_string();
     let mut ts_fields = vec![];
     let mut field_conversions = vec![];
     let mut field_getters = vec![];
@@ -290,7 +291,7 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
         field_getters.push(quote! {
             #(#rs_doc_comment)*
             #[::wasm_bindgen::prelude::wasm_bindgen(method, getter = #ts_field_name)]
-            pub fn #field_name(this: &#ts_name) -> #field_type;
+            pub fn #field_name(this: &#binding_name) -> #field_type;
         });
 
         // Add an entry for the `From` implementation
@@ -313,7 +314,7 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
     }
 
     // Generate the TypeScript interface definition
-    let const_name = format_ident!("{}", &ts_name.to_string().to_uppercase());
+    let const_name = format_ident!("{}__TS_DEF", struct_name.to_string().to_uppercase());
     let (extends_clause, extends) = match args.extends {
         Some(extends) => (
             format!(
@@ -329,7 +330,7 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
         None => ("".to_string(), vec![]),
     };
     let ts_definition = format!(
-        r#"interface {ts_name}{extends_clause} {{
+        r#"export interface {ts_interface_name}{extends_clause} {{
   {}
 }}"#,
         ts_fields.join("\n  ")
@@ -350,16 +351,62 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
 
         #[::wasm_bindgen::prelude::wasm_bindgen]
         extern "C" {
-            #[wasm_bindgen(typescript_type = #ts_name, #(extends = #extends),*)]
-            pub type #ts_name;
+            #[derive(Clone)]
+            #[wasm_bindgen(typescript_type = #ts_interface_name, #(extends = #extends),*)]
+            pub type #binding_name;
 
             #(#field_getters)*
         }
 
-        impl From<#ts_name> for #struct_name {
+        impl ::wasm_bindgen::describe::WasmDescribe for #struct_name {
+            fn describe() {
+                <::wasm_bindgen::JsValue as ::wasm_bindgen::describe::WasmDescribe>::describe()
+            }
+        }
+
+        impl ::wasm_bindgen::convert::FromWasmAbi for #struct_name {
+            type Abi = <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::FromWasmAbi>::Abi;
+            #[inline]
+            unsafe fn from_abi(js: Self::Abi) -> Self {
+                let js_value = unsafe { <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::FromWasmAbi>::from_abi(js) };
+                ::std::convert::Into::<Self>::into(js_value)
+            }
+        }
+
+        impl ::wasm_bindgen::convert::IntoWasmAbi for #struct_name {
+            type Abi = <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::IntoWasmAbi>::Abi;
+            #[inline]
+            fn into_abi(self) -> Self::Abi {
+                let js_value: ::wasm_bindgen::JsValue = ::std::convert::Into::<::wasm_bindgen::JsValue>::into(self);
+                js_value.into_abi()
+            }
+        }
+
+        impl ::wasm_bindgen::convert::OptionFromWasmAbi for #struct_name {
+            #[inline]
+            fn is_none(abi: &Self::Abi) -> bool {
+                <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::OptionFromWasmAbi>::is_none(abi)
+            }
+        }
+
+        impl ::wasm_bindgen::convert::OptionIntoWasmAbi for #struct_name {
+            #[inline]
+            fn none() -> Self::Abi {
+                <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::OptionIntoWasmAbi>::none()
+            }
+        }
+
+        impl From<#binding_name> for #struct_name {
             /// Convert the JS binding into the Rust struct
-            fn from(js_value: #ts_name) -> Self {
+            fn from(js_value: #binding_name) -> Self {
                 js_value.parse()
+            }
+        }
+
+        impl From<::wasm_bindgen::JsValue> for #struct_name {
+            fn from(js_value: ::wasm_bindgen::JsValue) -> Self {
+                use ::wasm_bindgen::JsCast;
+                js_value.unchecked_into::<#binding_name>().parse()
             }
         }
 
@@ -371,14 +418,14 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
             }
         }
 
-        impl From<#struct_name> for #ts_name {
+        impl From<#struct_name> for #binding_name {
             fn from(value: #struct_name) -> Self {
                 use ::wasm_bindgen::JsCast;
-                ::wasm_bindgen::JsValue::from(value).unchecked_into::<#ts_name>()
+                ::wasm_bindgen::JsValue::from(value).unchecked_into::<#binding_name>()
             }
         }
 
-        impl #ts_name {
+        impl #binding_name {
             /// Parse the JS binding into its Rust struct
             pub fn parse(&self) -> #struct_name {
                 let js_value = self;
@@ -429,7 +476,7 @@ mod tests {
         let result = ts_internal(args, item);
         let result_str = result.to_string();
 
-        assert!(result_str.contains("interface IUser"));
+        assert!(result_str.contains("export interface User"));
         assert!(result_str.contains("status: Status;"));
     }
 }

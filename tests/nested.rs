@@ -30,24 +30,24 @@ struct Token {
 struct Order {
     account: String,
     amount: u64,
-    token: IToken, // Binding to the `Token` struct
+    token: Token, // Binding to the `Token` struct
 }
 
 #[wasm_bindgen(module = "/tests/nested.js")]
 extern "C" {
-    fn get_order() -> IOrder;
+    fn get_order() -> Order;
 }
 
 #[wasm_bindgen_test]
 fn test_nested_structs() {
-    let i_order = get_order();
+    let order = get_order();
 
-    let token = i_order.token();
-    let symbol = token.symbol();
-    let decimals = token.decimals().unwrap_or(18);
-    let total_supply = token.total_supply();
-    let account = i_order.account();
-    let amount = i_order.amount();
+    let token = &order.token;
+    let symbol = &token.symbol;
+    let decimals = token.decimals.unwrap_or(18);
+    let total_supply = token.total_supply;
+    let account = &order.account;
+    let amount = order.amount;
 
     assert_eq!(symbol, "FOO");
     assert_eq!(decimals, 18);
@@ -55,12 +55,6 @@ fn test_nested_structs() {
     assert_eq!(account, "0xAlice");
     assert_eq!(amount, 500);
 
-    // Test `.parse()` which should recursively parse the nested struct via `IToken`
-    let order: Order = i_order.parse();
-    assert_eq!(order.account, "0xAlice");
-    assert_eq!(order.amount, 500);
-
-    // Note: IToken parses into a Token via its own `.parse()` which is called by the `Order::parse()` via `From::from`
     let rust_token: Token = order.token.into();
     assert_eq!(rust_token.symbol, "FOO");
     assert_eq!(rust_token.decimals, None);
