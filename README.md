@@ -166,6 +166,55 @@ pub fn execute_callbacks_deferred(cbs: IAppInit) {
 }
 ```
 
+### Fallible Parsing
+
+`.parse()` is infallible: it assumes the incoming `JsValue` was shaped exactly
+like your `#[ts]` struct, and will panic (or throw a JS exception) if a
+required field is missing or has the wrong type. This is fine when the value
+is coming from `wasm-bindgen`'s own argument marshalling, but it's risky when
+parsing arbitrary/untrusted JS values (e.g. from `JSON.parse`, a user-supplied
+callback argument, or data read from local storage).
+
+For these situations, every generated `I`-prefixed binding also gets a
+`try_parse()` method, which returns `Result<Struct, JsValue>` instead of
+panicking:
+
+```rust
+#[wasm_bindgen]
+pub fn execute_callbacks_safe(cbs: IAppInit) -> Result<(), JsValue> {
+    // Validates every field instead of panicking on a bad shape
+    let callbacks: AppInit = cbs.try_parse()?;
+    callbacks.on_ready.call("System is ready".to_string()).unwrap();
+    Ok(())
+}
+```
+
+- Missing required fields produce a descriptive error:
+  ``"Missing required field `onReady`"``.
+- Fields with the wrong JS type (e.g. a number where a string was expected)
+  produce a descriptive error like
+  ``"Invalid field `onReady`: Expected a string"``.
+- Typed-array fields are checked too: `Vec<u8>` requires a `Uint8Array`,
+  `Vec<f64>` requires a `Float64Array`, and so on.
+- Enum fields accept only finite, integral values matching a declared enum
+  variant; invalid values include the enum name and received number in the
+  error message.
+- `Option<T>` fields are still allowed to be `null`/`undefined` and resolve to
+  `None` rather than erroring.
+- **Parsing is recursive**: if `AppInit` contains a nested `#[ts]` struct,
+  enum, or function-wrapper field, that field is parsed fallibly too, and any
+  error retains its field context through the outer `try_parse()` call, such as
+  ``"Invalid field `config`: Missing required field `onReady`"``.
+
+Because converting an arbitrary `JsValue` is inherently fallible,
+`#[ts]`-generated structs, enums, and function-wrapper types implement
+`TryFrom<JsValue, Error = JsValue>` (instead of an infallible `From<JsValue>`).
+You can use this directly wherever you have a raw `JsValue`:
+
+```rust
+let callbacks: AppInit = AppInit::try_from(js_value)?;
+```
+
 ### Zero-Copy Performance
 
 When returning large arrays, using `Vec<u8>` or similar will force a memory copy

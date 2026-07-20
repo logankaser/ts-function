@@ -116,7 +116,7 @@ fn test_example_3_ts_struct() {
     js_sys::Reflect::set(&raw_js_obj, &"onEvent".into(), &get_simple_func()).unwrap();
 
     // 2. Convert to the Rust native struct!
-    let functions = MyFunctions::from(JsValue::from(raw_js_obj));
+    let functions = MyFunctions::try_from(JsValue::from(raw_js_obj)).unwrap();
 
     // 3. Fire the function!
     functions

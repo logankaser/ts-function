@@ -16,7 +16,7 @@
 // limitations under the License.
 
 use crate::ts_type::{ToTsType, TsType};
-use heck::{ToLowerCamelCase, ToPascalCase};
+use heck::{ToLowerCamelCase, ToPascalCase, ToSnakeCase};
 use quote::{format_ident, quote};
 use syn::{
     Error, Fields, FieldsNamed, Ident, ItemStruct, Meta, Token,
@@ -97,8 +97,13 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
         None => format_ident!("I{}", struct_name),
     };
     let ts_interface_name = struct_name.to_string();
+    let parse_field_error = format_ident!(
+        "parse_field_error_{}",
+        struct_name.to_string().to_snake_case()
+    );
     let mut ts_fields = vec![];
     let mut field_conversions = vec![];
+    let mut try_field_conversions = vec![];
     let mut field_getters = vec![];
     let mut field_setters = vec![];
     let mut processed_fields = vec![];
@@ -299,8 +304,36 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
             #field_name: js_value.#field_name()
         });
 
-        // Add a setter for the `Into<JsValue>` implementation
         let ts_field_name_str = ts_field_name.to_string();
+
+        let conversion_code = match crate::generate_return_conversion(struct_name, field_type) {
+            Ok(code) => code,
+            Err(err) => return err.to_compile_error(),
+        };
+
+        let optional_check = if !is_optional {
+            let err_msg = format!("Missing required field `{}`", ts_field_name_str);
+            quote! {
+                if res.is_null() || res.is_undefined() {
+                    return ::std::result::Result::Err(::wasm_bindgen::JsValue::from_str(#err_msg));
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        try_field_conversions.push(quote! {
+            #field_name: {
+                let res = ::js_sys::Reflect::get(js_value, &::wasm_bindgen::JsValue::from_str(#ts_field_name_str))
+                    .map_err(|error| #parse_field_error(#ts_field_name_str, error))?;
+                #optional_check
+                (|| -> ::std::result::Result<#field_type, ::wasm_bindgen::JsValue> {
+                    #conversion_code
+                })().map_err(|error| #parse_field_error(#ts_field_name_str, error))?
+            }
+        });
+
+        // Add a setter for the `Into<JsValue>` implementation
         field_setters.push(quote! {
             ::js_sys::Reflect::set(
                 &obj,
@@ -315,6 +348,7 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
 
     // Generate the TypeScript interface definition
     let const_name = format_ident!("{}__TS_DEF", struct_name.to_string().to_uppercase());
+    let try_convert_support = crate::generate_try_convert_support(struct_name);
     let (extends_clause, extends) = match args.extends {
         Some(extends) => (
             format!(
@@ -358,82 +392,105 @@ pub fn ts_internal(args: TsArgs, item: ItemStruct) -> proc_macro2::TokenStream {
             #(#field_getters)*
         }
 
-        impl ::wasm_bindgen::describe::WasmDescribe for #struct_name {
-            fn describe() {
-                <::wasm_bindgen::JsValue as ::wasm_bindgen::describe::WasmDescribe>::describe()
-            }
-        }
+        const _: () = {
+            #try_convert_support
 
-        impl ::wasm_bindgen::convert::FromWasmAbi for #struct_name {
-            type Abi = <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::FromWasmAbi>::Abi;
-            #[inline]
-            unsafe fn from_abi(js: Self::Abi) -> Self {
-                let js_value = unsafe { <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::FromWasmAbi>::from_abi(js) };
-                ::std::convert::Into::<Self>::into(js_value)
+            fn #parse_field_error(field: &str, error: ::wasm_bindgen::JsValue) -> ::wasm_bindgen::JsValue {
+                let message = error.as_string().unwrap_or_else(|| format!("{error:?}"));
+                ::wasm_bindgen::JsValue::from_str(&format!("Invalid field `{}`: {}", field, message))
             }
-        }
 
-        impl ::wasm_bindgen::convert::IntoWasmAbi for #struct_name {
-            type Abi = <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::IntoWasmAbi>::Abi;
-            #[inline]
-            fn into_abi(self) -> Self::Abi {
-                let js_value: ::wasm_bindgen::JsValue = ::std::convert::Into::<::wasm_bindgen::JsValue>::into(self);
-                js_value.into_abi()
-            }
-        }
-
-        impl ::wasm_bindgen::convert::OptionFromWasmAbi for #struct_name {
-            #[inline]
-            fn is_none(abi: &Self::Abi) -> bool {
-                <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::OptionFromWasmAbi>::is_none(abi)
-            }
-        }
-
-        impl ::wasm_bindgen::convert::OptionIntoWasmAbi for #struct_name {
-            #[inline]
-            fn none() -> Self::Abi {
-                <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::OptionIntoWasmAbi>::none()
-            }
-        }
-
-        impl From<#binding_name> for #struct_name {
-            /// Convert the JS binding into the Rust struct
-            fn from(js_value: #binding_name) -> Self {
-                js_value.parse()
-            }
-        }
-
-        impl From<::wasm_bindgen::JsValue> for #struct_name {
-            fn from(js_value: ::wasm_bindgen::JsValue) -> Self {
-                use ::wasm_bindgen::JsCast;
-                js_value.unchecked_into::<#binding_name>().parse()
-            }
-        }
-
-        impl From<#struct_name> for ::wasm_bindgen::JsValue {
-            fn from(value: #struct_name) -> Self {
-                let obj = ::js_sys::Object::new();
-                #( #field_setters )*
-                ::wasm_bindgen::JsValue::from(obj)
-            }
-        }
-
-        impl From<#struct_name> for #binding_name {
-            fn from(value: #struct_name) -> Self {
-                use ::wasm_bindgen::JsCast;
-                ::wasm_bindgen::JsValue::from(value).unchecked_into::<#binding_name>()
-            }
-        }
-
-        impl #binding_name {
-            /// Parse the JS binding into its Rust struct
-            pub fn parse(&self) -> #struct_name {
-                let js_value = self;
-                #struct_name {
-                    #(#field_conversions),*
+            impl ::wasm_bindgen::describe::WasmDescribe for #struct_name {
+                fn describe() {
+                    <::wasm_bindgen::JsValue as ::wasm_bindgen::describe::WasmDescribe>::describe()
                 }
             }
-        }
+
+            impl ::wasm_bindgen::convert::FromWasmAbi for #struct_name {
+                type Abi = <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::FromWasmAbi>::Abi;
+                #[inline]
+                unsafe fn from_abi(js: Self::Abi) -> Self {
+                    let js_value = unsafe { <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::FromWasmAbi>::from_abi(js) };
+                    use ::wasm_bindgen::JsCast;
+                    js_value.unchecked_into::<#binding_name>().parse()
+                }
+            }
+
+            impl ::wasm_bindgen::convert::IntoWasmAbi for #struct_name {
+                type Abi = <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::IntoWasmAbi>::Abi;
+                #[inline]
+                fn into_abi(self) -> Self::Abi {
+                    let js_value: ::wasm_bindgen::JsValue = ::std::convert::Into::<::wasm_bindgen::JsValue>::into(self);
+                    js_value.into_abi()
+                }
+            }
+
+            impl ::wasm_bindgen::convert::OptionFromWasmAbi for #struct_name {
+                #[inline]
+                fn is_none(abi: &Self::Abi) -> bool {
+                    <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::OptionFromWasmAbi>::is_none(abi)
+                }
+            }
+
+            impl ::wasm_bindgen::convert::OptionIntoWasmAbi for #struct_name {
+                #[inline]
+                fn none() -> Self::Abi {
+                    <::wasm_bindgen::JsValue as ::wasm_bindgen::convert::OptionIntoWasmAbi>::none()
+                }
+            }
+
+            impl From<#binding_name> for #struct_name {
+                /// Convert the JS binding into the Rust struct
+                fn from(js_value: #binding_name) -> Self {
+                    js_value.parse()
+                }
+            }
+
+            impl ::std::convert::TryFrom<::wasm_bindgen::JsValue> for #struct_name {
+                type Error = ::wasm_bindgen::JsValue;
+                #[inline]
+                fn try_from(js_value: ::wasm_bindgen::JsValue) -> ::std::result::Result<Self, Self::Error> {
+                    use ::wasm_bindgen::JsCast;
+                    js_value.unchecked_into::<#binding_name>().try_parse()
+                }
+            }
+
+            impl From<#struct_name> for ::wasm_bindgen::JsValue {
+                fn from(value: #struct_name) -> Self {
+                    let obj = ::js_sys::Object::new();
+                    #( #field_setters )*
+                    ::wasm_bindgen::JsValue::from(obj)
+                }
+            }
+
+            impl From<#struct_name> for #binding_name {
+                fn from(value: #struct_name) -> Self {
+                    use ::wasm_bindgen::JsCast;
+                    ::wasm_bindgen::JsValue::from(value).unchecked_into::<#binding_name>()
+                }
+            }
+
+            impl #binding_name {
+                /// Parse the JS binding into its Rust struct
+                pub fn parse(&self) -> #struct_name {
+                    let js_value = self;
+                    #struct_name {
+                        #(#field_conversions),*
+                    }
+                }
+
+                /// Try to parse the JS binding into its Rust struct, returning an error if parsing fails
+                pub fn try_parse(&self) -> ::std::result::Result<#struct_name, ::wasm_bindgen::JsValue> {
+                    let js_value = self;
+                    if js_value.is_null() || js_value.is_undefined() {
+                        return ::std::result::Result::Err(::wasm_bindgen::JsValue::from_str("Value is null or undefined"));
+                    }
+                    ::std::result::Result::Ok(#struct_name {
+                        #(#try_field_conversions),*
+                    })
+                }
+            }
+        };
 
         #[allow(unused)]
         #[doc = "### Typescript Binding"]

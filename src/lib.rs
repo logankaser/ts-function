@@ -67,9 +67,78 @@ fn ts_internal_dispatcher(attr: proc_macro2::TokenStream, item: Item) -> proc_ma
             ts_macro::ts_internal(args, item_struct.clone())
         }
         Item::Enum(item_enum) => {
+            let enum_name = &item_enum.ident;
+            let variants = item_enum
+                .variants
+                .iter()
+                .map(|variant| {
+                    if !matches!(variant.fields, syn::Fields::Unit) {
+                        return Err(Error::new_spanned(
+                            variant,
+                            "#[ts] enums must only contain unit variants",
+                        ));
+                    }
+                    Ok(&variant.ident)
+                })
+                .collect::<syn::Result<Vec<_>>>();
+            let variants = match variants {
+                Ok(variants) => variants,
+                Err(err) => return err.to_compile_error(),
+            };
+            let variant_constants = variants
+                .iter()
+                .map(|variant| {
+                    let name = format_ident!(
+                        "__TS_FUNCTION_VARIANT_{}",
+                        variant.to_string().to_uppercase()
+                    );
+                    quote! { const #name: u32 = #enum_name::#variant as u32; }
+                })
+                .collect::<Vec<_>>();
+            let conversion_arms = variants
+                .iter()
+                .map(|variant| {
+                    let name = format_ident!(
+                        "__TS_FUNCTION_VARIANT_{}",
+                        variant.to_string().to_uppercase()
+                    );
+                    quote! { #name => ::std::result::Result::Ok(Self::#variant), }
+                })
+                .collect::<Vec<_>>();
             quote! {
                 #[::wasm_bindgen::prelude::wasm_bindgen]
                 #item_enum
+
+                impl ::std::convert::TryFrom<::wasm_bindgen::JsValue> for #enum_name {
+                    type Error = ::wasm_bindgen::JsValue;
+
+                    #[inline]
+                    fn try_from(value: ::wasm_bindgen::JsValue) -> ::std::result::Result<Self, Self::Error> {
+                        let value = match value.as_f64() {
+                            ::std::option::Option::Some(value) => value,
+                            ::std::option::Option::None => {
+                                return ::std::result::Result::Err(::wasm_bindgen::JsValue::from_str(
+                                    concat!("Expected a number for enum ", stringify!(#enum_name)),
+                                ));
+                            }
+                        };
+                        if !value.is_finite()
+                            || value.fract() != 0.0
+                            || !(0.0..=u32::MAX as f64).contains(&value)
+                        {
+                            return ::std::result::Result::Err(::wasm_bindgen::JsValue::from_str(&format!(
+                                "Invalid {} variant: {}", stringify!(#enum_name), value
+                            )));
+                        }
+                        #(#variant_constants)*
+                        match value as u32 {
+                            #(#conversion_arms)*
+                            _ => ::std::result::Result::Err(::wasm_bindgen::JsValue::from_str(&format!(
+                                "Invalid {} variant: {}", stringify!(#enum_name), value
+                            ))),
+                        }
+                    }
+                }
             }
         }
         Item::Type(item_type) => match parse_item_type(item_type) {
@@ -94,7 +163,46 @@ struct ParsedSignature<'a> {
     output: &'a ReturnType,
 }
 
-fn generate_return_conversion(ty: &Type) -> syn::Result<proc_macro2::TokenStream> {
+pub(crate) fn generate_try_convert_support(struct_ident: &syn::Ident) -> proc_macro2::TokenStream {
+    let try_convert_name = format_ident!("try_convert_{}", struct_ident);
+    let trait_name = format_ident!("IntoJsValue_{}", struct_ident);
+    quote! {
+        #[allow(non_camel_case_types)]
+        trait #trait_name {
+            fn into_js_value(self) -> ::wasm_bindgen::JsValue;
+        }
+
+        impl #trait_name for ::wasm_bindgen::JsValue {
+            #[inline]
+            fn into_js_value(self) -> ::wasm_bindgen::JsValue {
+                self
+            }
+        }
+
+        impl #trait_name for ::std::convert::Infallible {
+            #[inline]
+            fn into_js_value(self) -> ::wasm_bindgen::JsValue {
+                match self {}
+            }
+        }
+
+        #[inline]
+        #[allow(non_snake_case)]
+        fn #try_convert_name<T, E>(res: ::wasm_bindgen::JsValue) -> ::std::result::Result<T, ::wasm_bindgen::JsValue>
+        where
+            T: ::std::convert::TryFrom<::wasm_bindgen::JsValue, Error = E>,
+            E: #trait_name,
+        {
+            ::std::convert::TryInto::<T>::try_into(res).map_err(#trait_name::into_js_value)
+        }
+    }
+}
+
+pub(crate) fn generate_return_conversion(
+    struct_ident: &syn::Ident,
+    ty: &Type,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let try_convert_name = format_ident!("try_convert_{}", struct_ident);
     match ty {
         Type::Path(type_path) => {
             let segment = type_path
@@ -109,8 +217,9 @@ fn generate_return_conversion(ty: &Type) -> syn::Result<proc_macro2::TokenStream
                 && let Some(arr_type) = get_typed_array_ident(inner_ty)
             {
                 return Ok(quote! {
-                    let arr: ::js_sys::#arr_type = ::wasm_bindgen::JsCast::unchecked_into(res);
-                    Ok(::std::convert::Into::<#ty>::into(arr.to_vec()))
+                    let arr: ::js_sys::#arr_type = ::wasm_bindgen::JsCast::dyn_into(res)
+                        .map_err(|_| ::wasm_bindgen::JsValue::from_str(concat!("Expected a ", stringify!(#arr_type))))?;
+                    ::std::result::Result::Ok::<_, ::wasm_bindgen::JsValue>(::std::convert::Into::<#ty>::into(arr.to_vec()))
                 });
             }
 
@@ -128,7 +237,7 @@ fn generate_return_conversion(ty: &Type) -> syn::Result<proc_macro2::TokenStream
                     res.as_string().ok_or_else(|| ::wasm_bindgen::JsValue::from_str("Expected a string"))
                 }),
                 "JsValue" => Ok(quote! {
-                    Ok(res)
+                    ::std::result::Result::Ok::<_, ::wasm_bindgen::JsValue>(res)
                 }),
                 "Option" => {
                     let PathArguments::AngleBracketed(args) = &segment.arguments else {
@@ -140,10 +249,10 @@ fn generate_return_conversion(ty: &Type) -> syn::Result<proc_macro2::TokenStream
                     let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() else {
                         return Err(Error::new_spanned(ty, "Expected type argument for Option"));
                     };
-                    let inner_conversion = generate_return_conversion(inner_ty)?;
+                    let inner_conversion = generate_return_conversion(struct_ident, inner_ty)?;
                     Ok(quote! {
                         if res.is_null() || res.is_undefined() {
-                            Ok(None)
+                            ::std::result::Result::Ok::<_, ::wasm_bindgen::JsValue>(None)
                         } else {
                             let res = { #inner_conversion };
                             res.map(Some)
@@ -151,7 +260,7 @@ fn generate_return_conversion(ty: &Type) -> syn::Result<proc_macro2::TokenStream
                     })
                 }
                 _ => Ok(quote! {
-                    Ok(::wasm_bindgen::JsCast::unchecked_into::<#ty>(res))
+                    #try_convert_name::<#ty, _>(res)
                 }),
             }
         }
@@ -213,7 +322,7 @@ fn parse_item_type(item_type: &ItemType) -> syn::Result<proc_macro2::TokenStream
     let (ret_type, ret_stmt) = match output {
         ReturnType::Default => (quote! { () }, quote! { self.0.#call_method.map(|_| ()) }),
         ReturnType::Type(_, ty) => {
-            let conversion = generate_return_conversion(ty)?;
+            let conversion = generate_return_conversion(struct_ident, ty)?;
             (
                 quote! { #ty },
                 quote! {
@@ -227,14 +336,16 @@ fn parse_item_type(item_type: &ItemType) -> syn::Result<proc_macro2::TokenStream
     Ok(quote! {
         pub struct #struct_ident(pub ::js_sys::Function);
 
-        impl #struct_ident {
-            pub fn call(&self, #(#fn_args),*) -> Result<#ret_type, ::wasm_bindgen::JsValue> {
-                #(#arg_conversions)*
-                #ret_stmt
-            }
-        }
+        const _: () = {
+            #abi_traits
 
-        #abi_traits
+            impl #struct_ident {
+                pub fn call(&self, #(#fn_args),*) -> Result<#ret_type, ::wasm_bindgen::JsValue> {
+                    #(#arg_conversions)*
+                    #ret_stmt
+                }
+            }
+        };
     })
 }
 
@@ -448,9 +559,13 @@ fn generate_abi_traits(parsed: &ParsedSignature) -> syn::Result<proc_macro2::Tok
         ts_output
     );
 
+    let try_convert_support = generate_try_convert_support(struct_ident);
+
     let generated = quote! {
         #[::wasm_bindgen::prelude::wasm_bindgen(typescript_custom_section)]
         const _: &'static str = #ts_string;
+
+        #try_convert_support
 
         impl ::wasm_bindgen::describe::WasmDescribe for #struct_ident {
             fn describe() {
@@ -475,6 +590,17 @@ fn generate_abi_traits(parsed: &ParsedSignature) -> syn::Result<proc_macro2::Tok
         impl From<::js_sys::Function> for #struct_ident {
             fn from(f: ::js_sys::Function) -> Self {
                 Self(f)
+            }
+        }
+
+        impl ::std::convert::TryFrom<::wasm_bindgen::JsValue> for #struct_ident {
+            type Error = ::wasm_bindgen::JsValue;
+
+            #[inline]
+            fn try_from(value: ::wasm_bindgen::JsValue) -> ::std::result::Result<Self, Self::Error> {
+                use ::wasm_bindgen::JsCast;
+                let f = value.dyn_into::<::js_sys::Function>()?;
+                ::std::result::Result::Ok(Self(f))
             }
         }
 
