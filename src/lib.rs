@@ -272,7 +272,9 @@ pub(crate) fn generate_return_conversion(
 }
 
 fn parse_item_type(item_type: &ItemType) -> syn::Result<proc_macro2::TokenStream> {
-    let Type::BareFn(bare_fn) = &*item_type.ty else {
+    item_type.modifiers.require_empty()?;
+
+    let Type::FnPtr(bare_fn) = &*item_type.ty else {
         return Err(Error::new_spanned(
             &item_type.ty,
             "Expected a function pointer type (e.g., `fn(x: f64)`)",
@@ -456,6 +458,8 @@ fn get_slice_element_type(ty: &Type) -> Option<&Type> {
 }
 
 fn parse_item_impl(item_impl: &ItemImpl) -> syn::Result<proc_macro2::TokenStream> {
+    item_impl.modifiers.require_empty()?;
+
     if item_impl.trait_.is_some() {
         return Err(Error::new_spanned(
             item_impl,
@@ -730,5 +734,16 @@ mod tests {
         let result_str = result.to_string();
 
         assert!(result_str.contains("type NestedVecFn = (args: Float64Array[]) => void;"));
+    }
+
+    #[test]
+    fn test_item_impl_rejects_modifiers() {
+        let item_impl: ItemImpl = parse_quote! {
+            default impl Callback {
+                fn call(&self) {}
+            }
+        };
+
+        assert!(parse_item_impl(&item_impl).is_err());
     }
 }

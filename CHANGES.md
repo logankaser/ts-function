@@ -1,5 +1,9 @@
 # Changes
 
+## 0.5.1
+Update to `syn` `3`, for better compatability with future rust versions.
+No runtime changes.
+
 ## 0.5.0
 
 - Added `try_parse()` to the generated `I`-prefixed JS bindings for `#[ts]` structs. Unlike `.parse()`, which is infallible and panics/throws on missing or malformed fields, `.try_parse()` returns a `Result<Struct, JsValue>`, safely validating each field. Missing required fields produce `"Missing required field `<name>`"`; other failures identify their field, including recursively nested failures. Typed-array fields require their corresponding JS typed array, and enum fields accept only declared integral variants.

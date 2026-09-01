@@ -972,7 +972,7 @@ fn strip_type(ty: &Type) -> Result<String, TsTypeError> {
                         let inputs = paren
                             .inputs
                             .iter()
-                            .map(strip_type)
+                            .map(|input| strip_type(&input.ty))
                             .collect::<Result<Vec<_>, _>>()?
                             .join(", ");
                         format!("({})", inputs)
